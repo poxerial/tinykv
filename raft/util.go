@@ -26,6 +26,12 @@ import (
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
+func assert(b bool) {
+	if !b {
+		panic("")
+	}
+}
+
 func min(a, b uint64) uint64 {
 	if a > b {
 		return b

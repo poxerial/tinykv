@@ -18,9 +18,9 @@ import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 
 // RaftLog manage the log entries, its struct look like:
 //
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
+//	snapshot/first.....applied....committed....stabled.....last
+//	--------|------------------------------------------------|
+//	                          log entries
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
@@ -56,7 +56,79 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	return nil
+	fi, err := storage.FirstIndex()
+	if err != nil {
+		panic(err.Error())
+	}
+	li, err := storage.LastIndex()
+	if err != nil {
+		panic(err.Error())
+	}
+	entries, err := storage.Entries(fi, li+1)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return &RaftLog{
+		storage:   storage,
+		committed: li,
+		applied:   li,
+		stabled:   li,
+		entries:   entries,
+
+		// 2CTODO
+		pendingSnapshot: &pb.Snapshot{},
+	}
+}
+
+// return entries in range [args[0], args[1])
+// or return entries in range [args[0]:]
+func (l RaftLog) getEntries(args ...uint64) []pb.Entry {
+	offset := l.offset()
+	if len(args) == 1 {
+		return l.entries[args[0]-offset:]
+	} else if len(args) == 2 {
+		return l.entries[args[0]-offset : args[1]-offset]
+	}
+	panic("")
+}
+
+func (l RaftLog) getEntriesRef(args ...uint64) []*pb.Entry {
+	offset := l.offset()
+	entries := make([]*pb.Entry, 0)
+	if len(args) == 1 {
+		for _, entry := range l.entries[args[0]-offset:] {
+			entries = append(entries, &entry)
+		}
+		return entries
+	} else if len(args) == 2 {
+		for _, entry := range l.entries[args[0]-offset : args[1]-offset] {
+			entries = append(entries, &entry)
+		}
+		return entries
+	}
+	panic("")
+}
+
+func (l RaftLog) logIndex() uint64 {
+	if len(l.entries) == 0 {
+		return 0
+	}
+	return l.entries[len(l.entries)-1].Index
+}
+
+func (l RaftLog) offset() uint64 {
+	if len(l.entries) == 0 {
+		return 0
+	}
+	return l.entries[0].Index
+}
+
+func (l RaftLog) logTerm() uint64 {
+	if len(l.entries) == 0 {
+		return 0
+	}
+	return l.entries[len(l.entries)-1].Term
 }
 
 // We need to compact the log entries in some point of time like
@@ -71,29 +143,36 @@ func (l *RaftLog) maybeCompact() {
 // note, this is one of the test stub functions you need to implement.
 func (l *RaftLog) allEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	return l.entries
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	return l.entries[l.stabled-l.offset()+1:]
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return nil
+	return l.entries[l.applied+1-l.offset() : l.committed+1-l.offset()]
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return 0
+	if len(l.entries) == 0 {
+		return 0
+	}
+	return l.entries[len(l.entries)-1].Index
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	return 0, nil
+	i = i - l.offset()
+	if i >= uint64(len(l.entries)) {
+		return 0, ErrUnavailable
+	}
+	return l.entries[i].Term, nil
 }
