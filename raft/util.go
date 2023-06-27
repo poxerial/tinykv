@@ -26,9 +26,13 @@ import (
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
+const debug = true
+
 func assert(b bool) {
-	if !b {
-		panic("")
+	if debug {
+		if !b {
+			panic("")
+		}
 	}
 }
 

@@ -110,6 +110,7 @@ func (l RaftLog) getEntriesRef(args ...uint64) []*pb.Entry {
 	panic("")
 }
 
+// return the index of the last log entry
 func (l RaftLog) logIndex() uint64 {
 	if len(l.entries) == 0 {
 		return 0
@@ -149,6 +150,9 @@ func (l *RaftLog) allEntries() []pb.Entry {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
+	if len(l.entries) == 0 {
+		return []pb.Entry{}
+	}
 	return l.entries[l.stabled-l.offset()+1:]
 }
 
@@ -170,9 +174,9 @@ func (l *RaftLog) LastIndex() uint64 {
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	i = i - l.offset()
-	if i >= uint64(len(l.entries)) {
+	offset := l.offset()
+	if i < offset || i - offset >= uint64(uint64(len(l.entries))) {
 		return 0, ErrUnavailable
 	}
-	return l.entries[i].Term, nil
+	return l.entries[i - offset].Term, nil
 }
