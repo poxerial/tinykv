@@ -69,11 +69,16 @@ func newLog(storage Storage) *RaftLog {
 		panic(err.Error())
 	}
 
+	var stabled uint64 = 0
+	if len(entries) != 0 {
+		stabled = entries[len(entries)-1].Index
+	}
+
 	return &RaftLog{
 		storage:   storage,
-		committed: li,
-		applied:   li,
-		stabled:   li,
+		committed: 0,
+		applied:   0,
+		stabled:   stabled,
 		entries:   entries,
 
 		// 2CTODO
@@ -97,8 +102,8 @@ func (l RaftLog) getEntriesRef(args ...uint64) []*pb.Entry {
 	offset := l.offset()
 	entries := make([]*pb.Entry, 0)
 	if len(args) == 1 {
-		for _, entry := range l.entries[args[0]-offset:] {
-			entries = append(entries, &entry)
+		for i := args[0] - offset; i < uint64(len(l.entries)); i++ {
+			entries = append(entries, &l.entries[i])
 		}
 		return entries
 	} else if len(args) == 2 {
@@ -159,6 +164,9 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
+	if len(l.entries) == 0 {
+		return nil
+	}
 	return l.entries[l.applied+1-l.offset() : l.committed+1-l.offset()]
 }
 
@@ -175,8 +183,8 @@ func (l *RaftLog) LastIndex() uint64 {
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 	offset := l.offset()
-	if i < offset || i - offset >= uint64(uint64(len(l.entries))) {
+	if i < offset || i-offset >= uint64(uint64(len(l.entries))) {
 		return 0, ErrUnavailable
 	}
-	return l.entries[i - offset].Term, nil
+	return l.entries[i-offset].Term, nil
 }
