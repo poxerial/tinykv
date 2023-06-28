@@ -86,6 +86,11 @@ func newLog(storage Storage) *RaftLog {
 	}
 }
 
+func (l RaftLog) getEntry(i uint64) *pb.Entry {
+	offset := l.offset()
+	return &l.entries[i-offset]
+}
+
 // return entries in range [args[0], args[1])
 // or return entries in range [args[0]:]
 func (l RaftLog) getEntries(args ...uint64) []pb.Entry {
