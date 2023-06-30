@@ -74,9 +74,14 @@ func newLog(storage Storage) *RaftLog {
 		stabled = entries[len(entries)-1].Index
 	}
 
+	hs, _, err := storage.InitialState()
+	if err != nil {
+		panic(err.Error())
+	}
+
 	return &RaftLog{
 		storage:   storage,
-		committed: 0,
+		committed: hs.Commit,
 		applied:   0,
 		stabled:   stabled,
 		entries:   entries,

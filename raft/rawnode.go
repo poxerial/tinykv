@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"reflect"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -69,13 +70,27 @@ type Ready struct {
 // RawNode is a wrapper of Raft.
 type RawNode struct {
 	Raft *Raft
+	hs   pb.HardState
+	ss   SoftState
 	// Your Data Here (2A).
 }
 
 // NewRawNode returns a new RawNode given configuration and a list of raft peers.
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
-	return nil, nil
+	raft := newRaft(config)
+	return &RawNode{
+		Raft: raft,
+		hs: pb.HardState{
+			Term:   raft.Term,
+			Vote:   raft.Vote,
+			Commit: raft.RaftLog.committed,
+		},
+		ss: SoftState{
+			Lead:      raft.Lead,
+			RaftState: raft.State,
+		},
+	}, nil
 }
 
 // Tick advances the internal logical clock by a single tick.
@@ -143,12 +158,79 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	return Ready{}
+	ss := &SoftState{
+		Lead:      rn.Raft.Lead,
+		RaftState: rn.Raft.State,
+	}
+	if reflect.DeepEqual(*ss, rn.ss) {
+		ss = nil
+	}
+
+	hs := pb.HardState{
+		Term:   rn.Raft.Term,
+		Vote:   rn.Raft.Vote,
+		Commit: rn.Raft.Term,
+	}
+	if reflect.DeepEqual(hs, rn.hs) {
+		hs = pb.HardState{}
+	}
+
+	entries := rn.Raft.RaftLog.unstableEntries()
+
+	// 2C
+	snapshot := pb.Snapshot{}
+
+	committed := rn.Raft.RaftLog.nextEnts()
+
+	messages := rn.Raft.msgs
+	if len(messages) == 0 {
+		messages = nil
+	}
+	// rn.Raft.msgs = []pb.Message{}
+
+	return Ready{
+		SoftState:        ss,
+		HardState:        hs,
+		Entries:          entries,
+		Snapshot:         snapshot,
+		CommittedEntries: committed,
+		Messages:         messages,
+	}
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
 func (rn *RawNode) HasReady() bool {
 	// Your Code Here (2A).
+	ss := &SoftState{
+		Lead:      rn.Raft.Lead,
+		RaftState: rn.Raft.State,
+	}
+	if !reflect.DeepEqual(*ss, rn.ss) {
+		return true
+	}
+
+	hs := pb.HardState{
+		Term:   rn.Raft.Term,
+		Vote:   rn.Raft.Vote,
+		Commit: rn.Raft.Term,
+	}
+	if !reflect.DeepEqual(hs, rn.hs) {
+		return true
+	}
+
+	if len(rn.Raft.RaftLog.unstableEntries()) != 0 {
+		return true
+	}
+
+	// 2C
+
+	if len(rn.Raft.RaftLog.nextEnts()) != 0 {
+		return true
+	}
+
+	if len(rn.Raft.msgs) != 0 {
+		return true
+	}
 	return false
 }
 
@@ -156,6 +238,27 @@ func (rn *RawNode) HasReady() bool {
 // last Ready results.
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
+	if rd.SoftState != nil {
+		rn.ss = *rd.SoftState
+	}
+
+	if rd.HardState.Term != 0 {
+		rn.hs = rd.HardState
+	}
+
+	len_entries := len(rd.Entries)
+	if len_entries != 0 {
+		rn.Raft.RaftLog.stabled = rd.Entries[len_entries-1].Index
+	}
+
+	// 2C
+
+	len_committed := len(rd.CommittedEntries)
+	if len_committed != 0 {
+		rn.Raft.RaftLog.applied = rd.CommittedEntries[len_committed-1].Index
+	}
+
+	rn.Raft.msgs = []pb.Message{}
 }
 
 // GetProgress return the Progress of this node and its peers, if this
