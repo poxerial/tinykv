@@ -16,9 +16,10 @@ package raft
 
 import (
 	"errors"
-	"log"
 	"math/rand"
 	"sort"
+
+	"github.com/pingcap-incubator/tinykv/log"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -167,28 +168,30 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
+	// Your Code Here (2A).
+
+	RaftLog := newLog(c.Storage)
 
 	Prs := make(map[uint64]*Progress)
 	for _, pr := range c.peers {
 		Prs[pr] = &Progress{
-			Match: 0,
-			Next:  1,
+			Match: RaftLog.logIndex(),
+			Next:  RaftLog.logIndex() + 1,
 		}
 	}
 
-	RaftLog := newLog(c.Storage)
-
-	Prs[c.ID] = &Progress{
-		Match: RaftLog.logIndex(),
-		Next:  RaftLog.logIndex() + 1,
+	istate, cstate, err := c.Storage.InitialState()
+	for _, pr := range cstate.Nodes {
+		Prs[pr] = &Progress{
+			Match: RaftLog.logIndex(),
+			Next:  RaftLog.logIndex() + 1,
+		}
 	}
 
-	istate, _, err := c.Storage.InitialState()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	// Your Code Here (2A).
 	return &Raft{
 		Term: istate.Term,
 		Vote: istate.Vote,
@@ -202,7 +205,7 @@ func newRaft(c *Config) *Raft {
 
 		State: StateFollower,
 
-		electionElapsed: 1000,
+		electionElapsed: c.ElectionTick,
 
 		votes: make(map[uint64]bool),
 		msgs:  make([]pb.Message, 0),
@@ -231,12 +234,6 @@ func (r *Raft) sendAppend(to uint64) bool {
 	msg.Commit = r.RaftLog.committed
 	msg.Entries = r.RaftLog.getEntriesRef(next)
 	msg.Index = next - 1
-
-	if msg.Index == 0 {
-		msg.LogTerm = 0
-		r.send(msg)
-		return true
-	}
 
 	term, err := r.RaftLog.Term(msg.Index)
 	if err != nil {
@@ -279,6 +276,12 @@ func (r *Raft) tick() {
 		}
 	default:
 		if r.electionElapsed++; r.electionElapsed >= r.electionTimeout {
+			if r.electionElapsed >= r.electionTimeout*2 {
+				r.electionElapsed = 0
+				r.becomeCandidate()
+				r.elect()
+				return
+			}
 			// to randomize eletion timeout without add new member to struct `Raft`
 			// possibility of elect is 1/n in each turn
 			n := r.electionTimeout*2 - r.electionElapsed
@@ -289,8 +292,6 @@ func (r *Raft) tick() {
 				r.becomeCandidate()
 				r.elect()
 			}
-			// msg := r.newMessage(pb.MessageType_MsgHup, r.id)
-			// r.send(msg)
 		}
 	}
 }
@@ -348,7 +349,7 @@ func (r *Raft) becomeLeader() {
 
 	for _, progress := range r.Prs {
 		progress.Match = 0
-		progress.Next = r.RaftLog.LastIndex() + 1
+		progress.Next = r.RaftLog.logIndex() + 1
 	}
 
 	r.handlePropose(pb.Message{
@@ -431,6 +432,12 @@ func (r *Raft) Step(m pb.Message) error {
 	}
 
 	r.callHandler(m)
+
+	for _, pr := range r.Prs {
+		if pr.Next == 0 {
+			panic("")
+		}
+	}
 
 	return nil
 }
@@ -518,6 +525,8 @@ func (r *Raft) handlePropose(m pb.Message) {
 		return
 	}
 
+	log.Debugf("%v handle propose", r.id)
+
 	index := r.RaftLog.logIndex() + 1
 	for i, entry_ref := range m.Entries {
 		entry := *entry_ref
@@ -555,6 +564,10 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	msg := r.newMessage(pb.MessageType_MsgAppendResponse, m.From)
 
 	defer r.send(msg)
+
+	if len(m.Entries) != 0 && len(m.Entries[0].Data) != 0 {
+		log.Debugf("debug")
+	}
 
 	if m.Term < r.Term {
 		msg.Reject = true
@@ -702,18 +715,22 @@ func (r *Raft) handleBeat(m pb.Message) {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	msg := r.newMessage(pb.MessageType_MsgHeartbeatResponse, m.From)
+	defer r.send(msg)
 	r.electionElapsed = 0
 
 	if m.Index > r.RaftLog.logIndex() {
-		msg := r.newMessage(pb.MessageType_MsgHeartbeatResponse, m.From)
 		msg.Reject = true
 		msg.Index = r.RaftLog.logIndex()
-		r.send(msg)
-	} else if m.Index == 0 && m.LogTerm == 0 || r.RaftLog.getEntry(m.Index).Term != m.LogTerm {
-		msg := r.newMessage(pb.MessageType_MsgHeartbeatResponse, m.From)
+		return
+	}
+	term, err := r.RaftLog.Term(m.Index)
+	if err != nil {
+		panic("")
+	}
+	if term != m.LogTerm {
 		msg.Reject = true
 		msg.Index = m.Index - 1
-		r.send(msg)
 	} else {
 		r.updateCommit(m)
 	}
