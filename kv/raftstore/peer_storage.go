@@ -314,15 +314,9 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 			return err
 		}
 	}
-	for index := entries[len(entries)-1].Index; index <= ps.raftState.LastIndex; index++ {
-		deleted := &eraftpb.Entry{}
-		err := raftWB.SetMeta(meta.RaftLogKey(ps.region.Id, index), deleted)
-		if err != nil {
-			return err
-		}
+	for index := entries[len(entries)-1].Index + 1; index <= ps.raftState.LastIndex; index++ {
+		raftWB.DeleteMeta(meta.RaftLogKey(ps.region.Id, index))
 	}
-	ps.raftState.LastTerm = entries[len(entries)-1].Term
-	ps.raftState.LastIndex = entries[len(entries)-1].Index
 	return nil
 }
 
@@ -370,13 +364,14 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		}
 		state.LastIndex = ready.Entries[len(ready.Entries)-1].Index
 		state.LastTerm = ready.Entries[len(ready.Entries)-1].Term
+
+		defer func() {
+			ps.raftState.LastIndex = ready.Entries[len(ready.Entries)-1].Index
+			ps.raftState.LastTerm = ready.Entries[len(ready.Entries)-1].Term
+		}()
 	}
 
 	err = rfWB.SetMeta(meta.RaftStateKey(ps.region.Id), state)
-	if err != nil {
-		return nil, err
-	}
-
 	if err != nil {
 		return nil, err
 	}

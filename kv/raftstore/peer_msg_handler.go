@@ -47,6 +47,7 @@ func (d *peerMsgHandler) apply(entry *eraftpb.Entry, cmd *raft_cmdpb.RaftCmdRequ
 	if entry.Data == nil || len(entry.Data) == 0 {
 		return
 	}
+	cmd.Reset()
 	err := cmd.Unmarshal(entry.Data)
 	if err != nil {
 		panic(err.Error())
@@ -79,6 +80,7 @@ func (d *peerMsgHandler) applyWithResp(entry *eraftpb.Entry, cmd *raft_cmdpb.Raf
 	resp := newCmdResp()
 	BindRespTerm(resp, d.peerStorage.raftState.HardState.Term)
 
+	cmd.Reset()
 	err := cmd.Unmarshal(entry.Data)
 	if err != nil {
 		panic(err.Error())
@@ -102,9 +104,6 @@ func (d *peerMsgHandler) applyWithResp(entry *eraftpb.Entry, cmd *raft_cmdpb.Raf
 		log.Fatalf("Can't find proposal!log term: %v index: %v, peer term: %v", entry.Term, entry.Index, d.Term())
 	}
 
-	if len(cmd.Requests) > 1 {
-		log.Infof("multiple requests received: len: %v, index: %v", len(cmd.Requests), entry.Index)
-	}
 	responses := make([]*raft_cmdpb.Response, len(cmd.Requests))
 	for i, request := range cmd.Requests {
 		response := &raft_cmdpb.Response{CmdType: request.CmdType}
@@ -201,11 +200,12 @@ func (d *peerMsgHandler) process(ready *raft.Ready) {
 				d.apply(&entry, cmd, kvWB)
 			}
 		}
-		apply := rspb.RaftApplyState{
-			AppliedIndex:   ready.CommittedEntries[len(ready.CommittedEntries)-1].Index,
-			TruncatedState: nil, // 2C
+		apply, err := meta.GetApplyState(d.ctx.engine.Kv, d.regionId)
+		if err != nil {
+			panic(err.Error())
 		}
-		err = kvWB.SetMeta(meta.ApplyStateKey(d.peerStorage.region.Id), &apply)
+		apply.AppliedIndex = ready.CommittedEntries[len(ready.CommittedEntries)-1].Index
+		err = kvWB.SetMeta(meta.ApplyStateKey(d.peerStorage.region.Id), apply)
 		if err != nil {
 			panic(err.Error())
 		}
@@ -329,14 +329,9 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		return
 	}
 	// Your Code Here (2B).
-
 	data, err := msg.Marshal()
 	if err != nil {
 		panic(err.Error())
-	}
-
-	if len(msg.Requests) > 1 {
-		log.Infof("multiple requests received: len: %v, index: %v", len(msg.Requests), d.nextProposalIndex())
 	}
 
 	d.proposals = append(d.proposals, &proposal{
@@ -344,6 +339,8 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		term:  d.Term(),
 		cb:    cb,
 	})
+
+	// log.Infof("%v receive proposal %v at index %v", d.Tag, msg, d.nextProposalIndex())
 
 	d.RaftGroup.Propose(data)
 

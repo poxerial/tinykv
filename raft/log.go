@@ -53,6 +53,8 @@ type RaftLog struct {
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
+	truncatedIndex uint64
+	truncatedTerm  uint64
 }
 
 // newLog returns log using the given storage. It recovers the log
