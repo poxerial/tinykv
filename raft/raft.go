@@ -161,6 +161,13 @@ type Raft struct {
 	// value.
 	// (Used in 3A conf change)
 	PendingConfIndex uint64
+
+	// heartbeat responses accepted count
+	// used to check whether it is safe to read data without commit entries
+	heartbeatsReceived int
+
+	// whether it is safe to read data without commit entries
+	readable bool
 }
 
 // newRaft return a raft peer with the given config
@@ -216,6 +223,10 @@ func newRaft(c *Config) *Raft {
 	}
 }
 
+func (r *Raft) Readable() bool {
+	return r.readable
+}
+
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
@@ -261,6 +272,22 @@ func (r *Raft) sendHeartbeat(to uint64) {
 
 func (r *Raft) sendSnapshot(to uint64) {
 	// 2C
+	snapshot := &pb.Snapshot{}
+	var err error
+	// for err = ErrSnapshotTemporarilyUnavailable; err == ErrSnapshotTemporarilyUnavailable; time.Sleep(1 * time.Microsecond) {
+	// }
+	// if err != nil {
+	// 	panic(err)
+	// }
+	*snapshot, err = r.RaftLog.storage.Snapshot()
+	if err != nil {
+		snapshot = nil
+	}
+
+	msg := r.newMessage(pb.MessageType_MsgSnapshot, to)
+	msg.Snapshot = snapshot
+
+	r.send(msg)
 }
 
 // tick advances the internal logical clock by a single tick.
@@ -346,6 +373,9 @@ func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
 	r.State = StateLeader
+	r.readable = false
+	r.heartbeatsReceived = 0
+	r.heartbeatElapsed = r.heartbeatTimeout
 
 	for _, progress := range r.Prs {
 		progress.Match = 0
@@ -368,6 +398,12 @@ func (r *Raft) bcastHeartbeat() {
 		}
 	}
 	r.heartbeatElapsed = 0
+	if r.heartbeatsReceived+1 > len(r.Prs)/2 {
+		r.readable = true
+	} else {
+		r.readable = false
+	}
+	r.heartbeatsReceived = 0
 }
 
 func (r *Raft) bcastHeartbeatZero() {
@@ -378,6 +414,12 @@ func (r *Raft) bcastHeartbeatZero() {
 		}
 	}
 	r.heartbeatElapsed = 0
+	if r.heartbeatsReceived+1 > len(r.Prs)/2 {
+		r.readable = true
+	} else {
+		r.readable = false
+	}
+	r.heartbeatsReceived = 0
 }
 
 func (r *Raft) bcastAppend() {
@@ -388,8 +430,11 @@ func (r *Raft) bcastAppend() {
 	}
 }
 
-func isFromLeader(t pb.MessageType) bool {
-	switch t {
+func (r *Raft) isFromLeader(m *pb.Message) bool {
+	if r.Term > m.Term {
+		return false
+	}
+	switch m.MsgType {
 	case pb.MessageType_MsgAppend:
 		return true
 	case pb.MessageType_MsgSnapshot:
@@ -427,17 +472,17 @@ func (r *Raft) Step(m pb.Message) error {
 		}
 	}
 
-	if isFromLeader(m.MsgType) {
+	if r.isFromLeader(&m) {
 		r.Lead = m.From
 	}
 
 	r.callHandler(m)
 
-	for _, pr := range r.Prs {
-		if pr.Next == 0 {
-			panic("")
-		}
-	}
+	// for _, pr := range r.Prs {
+	// 	if pr.Next == 0 {
+	// 		panic("")
+	// 	}
+	// }
 
 	return nil
 }
@@ -462,6 +507,8 @@ func (r *Raft) callHandler(m pb.Message) {
 		r.handleHup(m)
 	case pb.MessageType_MsgBeat:
 		r.handleBeat(m)
+	case pb.MessageType_MsgSnapshot:
+		r.handleSnapshot(m)
 	// 2CTODO
 	default:
 		log.Fatalf("Unimplemented message type: %v", m.MsgType)
@@ -719,14 +766,14 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 	defer r.send(msg)
 	r.electionElapsed = 0
 
-	if m.Index > r.RaftLog.logIndex() {
+	if m.Index > r.RaftLog.logIndex() || m.Index < r.RaftLog.truncatedIndex {
 		msg.Reject = true
 		msg.Index = r.RaftLog.logIndex()
 		return
 	}
 	term, err := r.RaftLog.Term(m.Index)
 	if err != nil {
-		panic("")
+		panic(err.Error())
 	}
 	if term != m.LogTerm {
 		msg.Reject = true
@@ -743,12 +790,32 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if m.Reject {
 		r.Prs[m.From].Next = m.Index + 1
 		r.sendAppend(m.From)
+	} else {
+		r.heartbeatsReceived++
 	}
 }
 
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	if m.Term < r.Term || r.RaftLog.applied >= m.Snapshot.Metadata.Index {
+		return
+	} else if r.State == StateLeader {
+		panic("Leader received snapshot from the same term!")
+	}
+	r.RaftLog.applied = m.Snapshot.Metadata.Index
+	r.RaftLog.committed = max(r.RaftLog.applied, r.RaftLog.committed)
+	r.RaftLog.stabled = max(r.RaftLog.committed, r.RaftLog.stabled)
+	r.RaftLog.truncatedIndex = m.Snapshot.Metadata.Index
+	r.RaftLog.truncatedTerm = m.Snapshot.Metadata.Term
+
+	// 3C conf change
+	r.Prs = make(map[uint64]*Progress)
+	for _, peer := range m.Snapshot.Metadata.ConfState.Nodes {
+		r.Prs[peer] = &Progress{}
+	}
+
+	r.RaftLog.pendingSnapshot = m.Snapshot
 }
 
 // addNode add a new node to raft group

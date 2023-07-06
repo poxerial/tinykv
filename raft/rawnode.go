@@ -170,7 +170,7 @@ func (rn *RawNode) Ready() Ready {
 	hs := pb.HardState{
 		Term:   rn.Raft.Term,
 		Vote:   rn.Raft.Vote,
-		Commit: rn.Raft.Term,
+		Commit: rn.Raft.RaftLog.committed,
 	}
 	if reflect.DeepEqual(hs, rn.hs) {
 		hs = pb.HardState{}
@@ -178,8 +178,10 @@ func (rn *RawNode) Ready() Ready {
 
 	entries := rn.Raft.RaftLog.unstableEntries()
 
-	// 2C
-	snapshot := pb.Snapshot{}
+	var snapshot pb.Snapshot
+	if rn.Raft.RaftLog.pendingSnapshot != nil {
+		snapshot = *rn.Raft.RaftLog.pendingSnapshot
+	}
 
 	committed := rn.Raft.RaftLog.nextEnts()
 
@@ -213,7 +215,7 @@ func (rn *RawNode) HasReady() bool {
 	hs := pb.HardState{
 		Term:   rn.Raft.Term,
 		Vote:   rn.Raft.Vote,
-		Commit: rn.Raft.Term,
+		Commit: rn.Raft.RaftLog.committed,
 	}
 	if !reflect.DeepEqual(hs, rn.hs) {
 		return true
@@ -224,6 +226,9 @@ func (rn *RawNode) HasReady() bool {
 	}
 
 	// 2C
+	if rn.Raft.RaftLog.pendingSnapshot != nil {
+		return true
+	}
 
 	if len(rn.Raft.RaftLog.nextEnts()) != 0 {
 		return true
@@ -252,7 +257,7 @@ func (rn *RawNode) Advance(rd Ready) {
 		rn.Raft.RaftLog.stabled = rd.Entries[len_entries-1].Index
 	}
 
-	// 2C
+	rn.Raft.RaftLog.pendingSnapshot = nil
 
 	len_committed := len(rd.CommittedEntries)
 	if len_committed != 0 {

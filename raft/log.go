@@ -15,7 +15,6 @@
 package raft
 
 import (
-	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -86,6 +85,11 @@ func newLog(storage Storage) *RaftLog {
 		panic(err.Error())
 	}
 
+	term, err := storage.Term(fi - 1)
+	if err != nil {
+		panic(err.Error())
+	}
+
 	return &RaftLog{
 		storage:   storage,
 		committed: hs.Commit,
@@ -93,8 +97,10 @@ func newLog(storage Storage) *RaftLog {
 		stabled:   stabled,
 		entries:   entries,
 
-		// 2CTODO
-		pendingSnapshot: &pb.Snapshot{},
+		pendingSnapshot: nil,
+
+		truncatedIndex: fi - 1,
+		truncatedTerm:  term,
 	}
 }
 
@@ -135,21 +141,21 @@ func (l RaftLog) getEntriesRef(args ...uint64) []*pb.Entry {
 // return the index of the last log entry
 func (l RaftLog) logIndex() uint64 {
 	if len(l.entries) == 0 {
-		return l.applied
+		return l.truncatedIndex
 	}
 	return l.entries[len(l.entries)-1].Index
 }
 
 func (l RaftLog) offset() uint64 {
 	if len(l.entries) == 0 {
-		return 0
+		return l.truncatedIndex
 	}
 	return l.entries[0].Index
 }
 
 func (l RaftLog) logTerm() uint64 {
 	if len(l.entries) == 0 {
-		return 0
+		return l.truncatedTerm
 	}
 	return l.entries[len(l.entries)-1].Term
 }
@@ -191,7 +197,7 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
 	if len(l.entries) == 0 {
-		return 0
+		return l.truncatedIndex
 	}
 	return l.entries[len(l.entries)-1].Index
 }
@@ -202,10 +208,8 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 	offset := l.offset()
 	if i >= offset && i-offset < uint64(len(l.entries)) {
 		return l.entries[i-offset].Term, nil
-	} else if i == meta.RaftInitLogIndex {
-		return meta.RaftInitLogTerm, nil
-	} else if i == 0 {
-		return 0, nil
+	} else if i == l.truncatedIndex {
+		return l.truncatedTerm, nil
 	}
 	return 0, ErrUnavailable
 }

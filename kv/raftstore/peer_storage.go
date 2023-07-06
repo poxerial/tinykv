@@ -3,6 +3,7 @@ package raftstore
 import (
 	"bytes"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Connor1996/badger"
@@ -328,11 +329,78 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		return nil, err
 	}
 
+	ps.clearMeta(kvWB, raftWB)
+	ps.clearExtraData(snapData.Region)
+
+	snap_meta := snapshot.Metadata
+
+	apply := ps.applyState
+	apply.TruncatedState = &rspb.RaftTruncatedState{
+		Index: snap_meta.Index,
+		Term:  snap_meta.Term,
+	}
+
+	if snap_meta.Index > apply.AppliedIndex {
+		apply.AppliedIndex = snap_meta.Index
+	}
+	err := kvWB.SetMeta(meta.ApplyStateKey(ps.region.Id), apply)
+	if err != nil {
+		return nil, err
+	}
+
+	if ps.region.Id != snapData.Region.Id {
+		region := &rspb.RegionLocalState{
+			State:  rspb.PeerState_Normal,
+			Region: snapData.Region,
+		}
+		err = kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), region)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	raft := ps.raftState
+	if raft.HardState.Commit < snap_meta.Index {
+		raft.HardState.Commit = snap_meta.Index
+	}
+	if raft.LastIndex < snap_meta.Index {
+		raft.LastIndex = snap_meta.Index
+		raft.LastTerm = snap_meta.Term
+	}
+
+	err = raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), raft)
+	if err != nil {
+		return nil, err
+	}
+
+	ps.snapState.StateType = snap.SnapState_Applying
+	ps.region = snapData.Region
+
+	done := make(chan bool, 1)
+
+	ps.regionSched <- &runner.RegionTaskApply{
+		RegionId: ps.region.Id,
+		Notifier: done,
+		SnapMeta: snap_meta,
+		StartKey: ps.region.StartKey,
+		EndKey:   ps.region.EndKey,
+	}
+
+	go func() {
+		<-done
+		ps.snapState.StateType = snap.SnapState_Relax
+	}()
+
+	result := &ApplySnapResult{
+		PrevRegion: ps.region,
+		Region:     snapData.Region,
+	}
+
 	// Hint: things need to do here including: update peer storage state like raftState and applyState, etc,
 	// and send RegionTaskApply task to region worker through ps.regionSched, also remember call ps.clearMeta
 	// and ps.clearExtraData to delete stale data
 	// Your Code Here (2C).
-	return nil, nil
+	return result, nil
 }
 
 // Save memory states to disk.
@@ -365,10 +433,8 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		state.LastIndex = ready.Entries[len(ready.Entries)-1].Index
 		state.LastTerm = ready.Entries[len(ready.Entries)-1].Term
 
-		defer func() {
-			ps.raftState.LastIndex = ready.Entries[len(ready.Entries)-1].Index
-			ps.raftState.LastTerm = ready.Entries[len(ready.Entries)-1].Term
-		}()
+		ps.raftState.LastIndex = ready.Entries[len(ready.Entries)-1].Index
+		ps.raftState.LastTerm = ready.Entries[len(ready.Entries)-1].Term
 	}
 
 	err = rfWB.SetMeta(meta.RaftStateKey(ps.region.Id), state)
@@ -376,8 +442,32 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		return nil, err
 	}
 
-	err = rfWB.WriteToDB(ps.Engines.Raft)
-	return nil, err
+	wg := sync.WaitGroup{}
+
+	var result *ApplySnapResult
+	if ready.Snapshot.Data != nil && len(ready.Snapshot.Data) != 0 {
+		kvWB := &engine_util.WriteBatch{}
+		result, err = ps.ApplySnapshot(&ready.Snapshot, kvWB, rfWB)
+		if err != nil {
+			return nil, err
+		}
+
+		wg.Add(1)
+		go func() {
+			err = kvWB.WriteToDB(ps.Engines.Kv)
+			wg.Done()
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		err = rfWB.WriteToDB(ps.Engines.Raft)
+		wg.Done()
+	}()
+
+	wg.Wait()
+
+	return result, err
 }
 
 func (ps *PeerStorage) ClearData() {
