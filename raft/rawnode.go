@@ -107,6 +107,9 @@ func (rn *RawNode) Campaign() error {
 
 // Propose proposes data be appended to the raft log.
 func (rn *RawNode) Propose(data []byte) error {
+	if rn.Raft.leadTransferee != 0 {
+		return ErrProposalDropped
+	}
 	ent := pb.Entry{Data: data}
 	rn.Raft.handlePropose(pb.Message{
 		MsgType: pb.MessageType_MsgPropose,

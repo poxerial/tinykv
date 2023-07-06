@@ -49,6 +49,11 @@ func (d *peerMsgHandler) applyAdminRequest(req *raft_cmdpb.AdminRequest, kvWB *e
 	case raft_cmdpb.AdminCmdType_InvalidAdmin:
 		// pass
 	case raft_cmdpb.AdminCmdType_ChangePeer:
+		cc := eraftpb.ConfChange{
+			ChangeType: req.ChangePeer.ChangeType,
+			NodeId:     req.ChangePeer.Peer.Id,
+		}
+		d.RaftGroup.ProposeConfChange(cc)
 	case raft_cmdpb.AdminCmdType_CompactLog:
 		cg := req.CompactLog
 		apply := d.peerStorage.applyState
@@ -63,30 +68,23 @@ func (d *peerMsgHandler) applyAdminRequest(req *raft_cmdpb.AdminRequest, kvWB *e
 		}
 
 		d.ScheduleCompactLog(cg.CompactIndex)
-
-		// raft := d.peerStorage.raftState
-		// raft.LastIndex = cg.CompactIndex
-		// raft.LastTerm = cg.CompactTerm
-		// if raft.HardState.Commit < cg.CompactIndex {
-		// 	raft.HardState.Commit = cg.CompactIndex
-		// }
-
-		// rfWB := engine_util.WriteBatch{}
-		// err = rfWB.SetMeta(meta.RaftStateKey(d.regionId), raft)
-		// if err != nil {
-		// 	panic(err.Error())
-		// }
-		// err = rfWB.WriteToDB(d.ctx.engine.Raft)
-		// if err != nil {
-		// 	panic(err.Error())
-		// }
 	case raft_cmdpb.AdminCmdType_TransferLeader:
+		if !d.IsLeader() {
+			return
+		}
+		d.RaftGroup.TransferLeader(req.TransferLeader.Peer.Id)
 	case raft_cmdpb.AdminCmdType_Split:
 	}
 }
 
 func (d *peerMsgHandler) apply(entry *eraftpb.Entry) {
 	if entry.Data == nil || len(entry.Data) == 0 {
+		return
+	}
+
+	switch entry.EntryType {
+	case eraftpb.EntryType_EntryConfChange:
+		d.applyConfChange(entry)
 		return
 	}
 
@@ -121,8 +119,68 @@ func (d *peerMsgHandler) apply(entry *eraftpb.Entry) {
 	kvWB.Reset()
 }
 
+func (d *peerMsgHandler) applyConfChange(entry *eraftpb.Entry) {
+	cc := eraftpb.ConfChange{}
+	err := cc.Unmarshal(entry.Data)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	region := d.Region()
+	if cc.ChangeType == eraftpb.ConfChangeType_AddNode {
+		region.Peers = append(region.Peers, &metapb.Peer{
+			Id:      cc.NodeId,
+			StoreId: d.storeID(),
+		})
+	} else if cc.ChangeType == eraftpb.ConfChangeType_RemoveNode {
+		remove_index := 0
+		for i, peer := range region.Peers {
+			if peer.Id == cc.NodeId {
+				remove_index = i
+			}
+		}
+		if remove_index == 0 {
+			panic(fmt.Sprintf("Can't remove peer %v, no such peer in group %v", cc.NodeId, region.Peers))
+		}
+		if remove_index < len(region.Peers)-1 {
+			region.Peers = append(region.Peers[:remove_index], region.Peers[remove_index+1:]...)
+		} else {
+			region.Peers = region.Peers[:remove_index]
+		}
+	}
+
+	region.RegionEpoch.ConfVer++
+
+	ps := rspb.PeerState_Normal
+	if d.PeerId() == cc.NodeId && cc.ChangeType == eraftpb.ConfChangeType_RemoveNode {
+		ps = rspb.PeerState_Tombstone
+	}
+	st := &rspb.RegionLocalState{
+		State:  ps,
+		Region: region,
+	}
+
+	kvWB := &engine_util.WriteBatch{}
+	err = kvWB.SetMeta(meta.RegionStateKey(region.Id), st)
+	if err != nil {
+		panic(err.Error())
+	}
+	err = kvWB.WriteToDB(d.ctx.engine.Kv)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	d.RaftGroup.ApplyConfChange(cc)
+}
+
 func (d *peerMsgHandler) applyWithResp(entry *eraftpb.Entry) {
-	if entry.Data == nil || len(entry.Data) == 0 {
+	if len(entry.Data) == 0 {
+		return
+	}
+
+	switch entry.EntryType {
+	case eraftpb.EntryType_EntryConfChange:
+		d.applyConfChange(entry)
 		return
 	}
 
@@ -501,19 +559,21 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		panic(err.Error())
 	}
 
-	d.proposals = append(d.proposals, &proposal{
+	proposal := &proposal{
 		index: d.nextProposalIndex(),
 		term:  d.Term(),
 		cb:    cb,
-	})
+	}
 
-	// log.Infof("%v receive proposal %v at index %v", d.Tag, msg, d.nextProposalIndex())
-
-	d.RaftGroup.Propose(data)
-
-	if err != nil {
+	err = d.RaftGroup.Propose(data)
+	if err == raft.ErrProposalDropped {
+		cb.Done(ErrResp(err))
+		return
+	} else if err != nil {
 		panic(err.Error())
 	}
+
+	d.proposals = append(d.proposals, proposal)
 }
 
 func (d *peerMsgHandler) onTick() {
