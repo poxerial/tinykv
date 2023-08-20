@@ -3,6 +3,7 @@ package engine_util
 import (
 	"github.com/Connor1996/badger"
 	"github.com/golang/protobuf/proto"
+	rspb "github.com/pingcap-incubator/tinykv/proto/pkg/raft_serverpb"
 	"github.com/pingcap/errors"
 )
 
@@ -49,6 +50,12 @@ func (wb *WriteBatch) DeleteCF(cf string, key []byte) {
 }
 
 func (wb *WriteBatch) SetMeta(key []byte, msg proto.Message) error {
+	region_state, success := msg.(*rspb.RegionLocalState)
+	if success {
+		if region_state.Region == nil || ExceedEndKey(region_state.Region.StartKey, region_state.Region.EndKey) {
+			panic("invalid region!")
+		}
+	}
 	val, err := proto.Marshal(msg)
 	if err != nil {
 		return errors.WithStack(err)

@@ -98,6 +98,9 @@ func MustGetCf(engine *engine_util.Engines, cf string, key []byte, value []byte)
 		if err == nil && (value == nil || bytes.Compare(val, value) == 0) {
 			return
 		}
+		if err != nil {
+			log.Debug(err)
+		}
 		SleepMS(20)
 	}
 	panic(fmt.Sprintf("can't get value %s for key %s", hex.EncodeToString(value), hex.EncodeToString(key)))

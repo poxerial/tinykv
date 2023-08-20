@@ -168,6 +168,9 @@ type Raft struct {
 
 	// whether it is safe to read data without commit entries
 	readable bool
+
+	// there is no need to send snapshot to the same peer twice in one turn
+	hasSentSnap map[uint64]struct{}
 }
 
 // newRaft return a raft peer with the given config
@@ -217,10 +220,15 @@ func newRaft(c *Config) *Raft {
 		votes: make(map[uint64]bool),
 		msgs:  make([]pb.Message, 0),
 
-		// 3ATODO
 		leadTransferee:   0,
 		PendingConfIndex: 0,
+
+		hasSentSnap: make(map[uint64]struct{}),
 	}
+}
+
+func (r *Raft) LeadTransferee() uint64 {
+	return r.leadTransferee
 }
 
 func (r *Raft) Readable() bool {
@@ -271,14 +279,14 @@ func (r *Raft) sendHeartbeat(to uint64) {
 }
 
 func (r *Raft) sendSnapshot(to uint64) {
-	// 2C
+	if _, has_sent := r.hasSentSnap[to]; has_sent {
+		return
+	}
+	r.hasSentSnap[to] = struct{}{}
+
 	snapshot := &pb.Snapshot{}
 	var err error
-	// for err = ErrSnapshotTemporarilyUnavailable; err == ErrSnapshotTemporarilyUnavailable; time.Sleep(1 * time.Microsecond) {
-	// }
-	// if err != nil {
-	// 	panic(err)
-	// }
+
 	*snapshot, err = r.RaftLog.storage.Snapshot()
 	if err != nil {
 		snapshot = nil
@@ -372,6 +380,7 @@ func (r *Raft) becomeCandidate() {
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	log.Infof("%v becomes leader", r.id)
 	r.Lead = r.id
 	r.State = StateLeader
 	r.readable = false
@@ -396,7 +405,9 @@ func (r *Raft) send(msg *pb.Message) {
 func (r *Raft) bcastHeartbeat() {
 	for pr := range r.Prs {
 		if pr != r.id {
-			r.sendHeartbeat(pr)
+			// r.sendHeartbeat(pr)
+			msg := r.newMessage(pb.MessageType_MsgHeartbeat, pr)
+			r.send(msg)
 		}
 	}
 	r.heartbeatElapsed = 0
@@ -581,8 +592,6 @@ func (r *Raft) handlePropose(m pb.Message) {
 		}
 		return
 	}
-
-	log.Debugf("%v handle propose", r.id)
 
 	index := r.RaftLog.logIndex() + 1
 	for i, entry_ref := range m.Entries {
@@ -799,6 +808,7 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 	} else {
 		r.updateCommit(m)
 	}
+	msg.Index = r.RaftLog.logIndex()
 }
 
 func (r *Raft) handleHeartbeatResponse(m pb.Message) {
@@ -810,24 +820,29 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 		r.sendAppend(m.From)
 	} else {
 		r.heartbeatsReceived++
+		if m.Index < r.RaftLog.logIndex() {
+			r.Prs[m.From].Next = m.Index + 1
+			r.sendAppend(m.From)
+		}
 	}
 }
 
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	if r.RaftLog.pendingSnapshot != nil &&
+		r.RaftLog.pendingSnapshot.Metadata.Index > m.Snapshot.Metadata.Index {
+		return
+	}
 	if m.Term < r.Term || r.RaftLog.applied >= m.Snapshot.Metadata.Index {
 		return
 	} else if r.State == StateLeader {
 		panic("Leader received snapshot from the same term!")
 	}
-	r.RaftLog.applied = m.Snapshot.Metadata.Index
-	r.RaftLog.committed = max(r.RaftLog.applied, r.RaftLog.committed)
-	r.RaftLog.stabled = max(r.RaftLog.committed, r.RaftLog.stabled)
-	r.RaftLog.truncatedIndex = m.Snapshot.Metadata.Index
-	r.RaftLog.truncatedTerm = m.Snapshot.Metadata.Term
 
-	// 3C conf change
+	r.RaftLog.HandleSnapApply(m.Snapshot)
+
+	// 3B conf change
 	r.Prs = make(map[uint64]*Progress)
 	for _, peer := range m.Snapshot.Metadata.ConfState.Nodes {
 		r.Prs[peer] = &Progress{}
@@ -842,7 +857,7 @@ func (r *Raft) handleTransferLeader(m pb.Message) {
 		r.elect()
 	}
 
-	if r.State != StateLeader {
+	if r.State != StateLeader || r.id == m.From {
 		return
 	}
 

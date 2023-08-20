@@ -323,11 +323,30 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 
 // Apply the peer with given snapshot
 func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_util.WriteBatch, raftWB *engine_util.WriteBatch) (*ApplySnapResult, error) {
-	log.Infof("%v begin to apply snapshot", ps.Tag)
+	log.Infof("%v, begin to apply snapshot", ps.Tag)
 	snapData := new(rspb.RaftSnapshotData)
 	if err := snapData.Unmarshal(snapshot.Data); err != nil {
 		return nil, err
 	}
+
+	ps.snapState.StateType = snap.SnapState_Applying
+
+	done := make(chan bool, 1)
+
+	ps.regionSched <- &runner.RegionTaskApply{
+		RegionId: snapData.Region.Id,
+		Notifier: done,
+		SnapMeta: snapshot.Metadata,
+		StartKey: snapData.Region.StartKey,
+		EndKey:   snapData.Region.EndKey,
+	}
+
+	success := <-done
+	if !success {
+		return nil, nil
+	}
+
+	ps.snapState.StateType = snap.SnapState_Relax
 
 	ps.clearMeta(kvWB, raftWB)
 	ps.clearExtraData(snapData.Region)
@@ -349,11 +368,11 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	}
 
 	if ps.region.Id != snapData.Region.Id {
-		region := &rspb.RegionLocalState{
+		region_state := &rspb.RegionLocalState{
 			State:  rspb.PeerState_Normal,
 			Region: snapData.Region,
 		}
-		err = kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), region)
+		err = kvWB.SetMeta(meta.RegionStateKey(snapData.Region.Id), region_state)
 		if err != nil {
 			return nil, err
 		}
@@ -373,23 +392,7 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		return nil, err
 	}
 
-	ps.snapState.StateType = snap.SnapState_Applying
 	ps.region = snapData.Region
-
-	done := make(chan bool, 1)
-
-	ps.regionSched <- &runner.RegionTaskApply{
-		RegionId: ps.region.Id,
-		Notifier: done,
-		SnapMeta: snap_meta,
-		StartKey: ps.region.StartKey,
-		EndKey:   ps.region.EndKey,
-	}
-
-	go func() {
-		<-done
-		ps.snapState.StateType = snap.SnapState_Relax
-	}()
 
 	result := &ApplySnapResult{
 		PrevRegion: ps.region,
@@ -425,38 +428,48 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 		ps.raftState.HardState = &ready.HardState
 	}
 
-	if ready.Entries != nil && len(ready.Entries) != 0 {
+	var last_index, last_term uint64
+	if len(ready.Entries) != 0 {
 		err = ps.Append(ready.Entries, rfWB)
 		if err != nil {
 			return nil, err
 		}
-		state.LastIndex = ready.Entries[len(ready.Entries)-1].Index
-		state.LastTerm = ready.Entries[len(ready.Entries)-1].Term
-
-		ps.raftState.LastIndex = ready.Entries[len(ready.Entries)-1].Index
-		ps.raftState.LastTerm = ready.Entries[len(ready.Entries)-1].Term
-	}
-
-	err = rfWB.SetMeta(meta.RaftStateKey(ps.region.Id), state)
-	if err != nil {
-		return nil, err
+		last_index = ready.Entries[len(ready.Entries)-1].Index
+		last_term = ready.Entries[len(ready.Entries)-1].Term
 	}
 
 	wg := sync.WaitGroup{}
 
 	var result *ApplySnapResult
-	if ready.Snapshot.Data != nil && len(ready.Snapshot.Data) != 0 {
+	if len(ready.Snapshot.Data) != 0 {
 		kvWB := &engine_util.WriteBatch{}
 		result, err = ps.ApplySnapshot(&ready.Snapshot, kvWB, rfWB)
 		if err != nil {
 			return nil, err
 		}
+		if result != nil {
+			if last_index < ready.Snapshot.Metadata.Index {
+				last_index = ready.Snapshot.Metadata.Index
+				last_term = ready.Snapshot.Metadata.Term
+			}
+			wg.Add(1)
+			go func() {
+				err = kvWB.WriteToDB(ps.Engines.Kv)
+				wg.Done()
+			}()
+		}
+	}
 
-		wg.Add(1)
-		go func() {
-			err = kvWB.WriteToDB(ps.Engines.Kv)
-			wg.Done()
-		}()
+	if last_index != 0 {
+		state.LastIndex = last_index
+		state.LastTerm = last_term
+		ps.raftState.LastIndex = last_index
+		ps.raftState.LastTerm = last_term
+	}
+
+	err = rfWB.SetMeta(meta.RaftStateKey(ps.region.Id), state)
+	if err != nil {
+		return nil, err
 	}
 
 	wg.Add(1)

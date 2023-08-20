@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/Connor1996/badger"
+	"github.com/pingcap-incubator/tinykv/log"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 )
 
@@ -19,6 +20,9 @@ func (cb *Callback) Done(resp *raft_cmdpb.RaftCmdResponse) {
 	}
 	if resp != nil {
 		cb.Resp = resp
+	}
+	if resp.Header.Error != nil && resp.Header.Error.NotLeader != nil {
+		log.Infof("errNotLeader: %v", resp.Header.Error.NotLeader)
 	}
 	cb.done <- struct{}{}
 }

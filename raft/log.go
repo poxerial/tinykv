@@ -104,6 +104,15 @@ func newLog(storage Storage) *RaftLog {
 	}
 }
 
+func (l *RaftLog) HandleSnapApply(snap *pb.Snapshot) {
+	l.truncatedIndex = snap.Metadata.Index
+	l.truncatedTerm = snap.Metadata.Term
+
+	l.applied = snap.Metadata.Index
+	l.stabled = snap.Metadata.Index
+	l.entries = make([]pb.Entry, 0)
+}
+
 func (l RaftLog) getEntry(i uint64) *pb.Entry {
 	offset := l.offset()
 	return &l.entries[i-offset]

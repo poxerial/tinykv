@@ -18,6 +18,7 @@ import (
 	"errors"
 	"reflect"
 
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -156,6 +157,7 @@ func (rn *RawNode) Step(m pb.Message) error {
 	if pr := rn.Raft.Prs[m.From]; pr != nil || !IsResponseMsg(m.MsgType) {
 		return rn.Raft.Step(m)
 	}
+	log.Errorf("%v cannot step raft message from %v with message type %s", rn.Raft.id, m.From, m.MsgType)
 	return ErrStepPeerNotFound
 }
 
@@ -266,6 +268,8 @@ func (rn *RawNode) Advance(rd Ready) {
 	if len_committed != 0 {
 		rn.Raft.RaftLog.applied = rd.CommittedEntries[len_committed-1].Index
 	}
+
+	rn.Raft.hasSentSnap = make(map[uint64]struct{})
 
 	rn.Raft.msgs = []pb.Message{}
 }

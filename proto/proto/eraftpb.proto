@@ -107,3 +107,8 @@ message ConfChange {
     uint64 node_id = 2;
     bytes context = 3;
 }
+
+message ConfChangeContext {
+    uint64 store_id = 1;
+    uint64 confver = 2;
+}
