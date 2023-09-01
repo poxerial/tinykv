@@ -67,6 +67,11 @@ func InitRaftLocalState(raftEngine *badger.DB, region *metapb.Region) (*rspb.Raf
 			}
 		}
 	}
+	if len(region.Peers) > 0 &&
+		(raftState.LastIndex < 5 ||
+			raftState.HardState.Commit < 5) {
+		panic("last index can't be less than 5!")
+	}
 	return raftState, nil
 }
 
@@ -82,11 +87,15 @@ func InitApplyState(kvEngine *badger.DB, region *metapb.Region) (*rspb.RaftApply
 			applyState.AppliedIndex = RaftInitLogIndex
 			applyState.TruncatedState.Index = RaftInitLogIndex
 			applyState.TruncatedState.Term = RaftInitLogTerm
+			err = engine_util.PutMeta(kvEngine, ApplyStateKey(region.Id), applyState)
+			if err != nil {
+				return applyState, err
+			}
 		}
-		err = engine_util.PutMeta(kvEngine, ApplyStateKey(region.Id), applyState)
-		if err != nil {
-			return applyState, err
-		}
+	}
+	if len(region.Peers) > 0 &&
+		(applyState.AppliedIndex < 5 || applyState.TruncatedState.Index < 5) {
+		panic("apply index / truncated index can't be less than 5!")
 	}
 	return applyState, nil
 }

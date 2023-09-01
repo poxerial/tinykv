@@ -14,6 +14,7 @@ import (
 	"github.com/Connor1996/badger"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore"
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
 	"github.com/pingcap-incubator/tinykv/kv/storage/raft_storage"
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/log"
@@ -185,11 +186,20 @@ func (c *Cluster) AllocPeer(storeID uint64) *metapb.Peer {
 
 func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.Duration) (*raft_cmdpb.RaftCmdResponse, *badger.Txn) {
 	startTime := time.Now()
+	// defer func() {
+	// 	endTime := time.Now()
+	// 	elapsed := endTime.Sub(startTime)
+	// 	log.Infof("request %v finished in %v", reqs[0].CmdType, elapsed)
+	// }()
+	var resp *raft_cmdpb.RaftCmdResponse
+	var txn *badger.Txn
+	var err error
+
 	for i := 0; i < 10 || time.Since(startTime) < timeout; i++ {
 		region := c.GetRegion(key)
 		regionID := region.GetId()
 		req := NewRequest(regionID, region.RegionEpoch, reqs)
-		resp, txn := c.CallCommandOnLeader(&req, timeout)
+		resp, txn = c.CallCommandOnLeader(&req, timeout)
 		if resp == nil {
 			// it should be timeouted innerly
 			SleepMS(100)
@@ -198,6 +208,14 @@ func (c *Cluster) Request(key []byte, reqs []*raft_cmdpb.Request, timeout time.D
 		if resp.Header.Error != nil {
 			SleepMS(100)
 			continue
+		}
+		if len(resp.Responses) > 0 &&
+			resp.Responses[0].CmdType == raft_cmdpb.CmdType_Snap {
+			if err = util.CheckKeyInRegion(key, resp.Responses[0].Snap.Region); err != nil {
+				log.Infof("checkkeyinregion request region: %v ", region)
+				log.Infof("checkkeyinregion response region: %v ", resp.Responses[0].Snap.Region)
+				panic(err)
+			}
 		}
 		return resp, txn
 	}
@@ -223,7 +241,7 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 		request.Header.Peer = leader
 		resp, txn := c.CallCommand(request, 1*time.Second)
 		if resp == nil {
-			log.Debugf("can't call command %s on leader %d of region %d", request.String(), leader.GetId(), regionID)
+			// log.Debugf("can't call command %s on leader %d of region %d", request.String(), leader.GetId(), regionID)
 			newLeader := c.LeaderOfRegion(regionID)
 			if leader == newLeader {
 				region, _, err := c.schedulerClient.GetRegionByID(context.TODO(), regionID)
@@ -232,17 +250,17 @@ func (c *Cluster) CallCommandOnLeader(request *raft_cmdpb.RaftCmdRequest, timeou
 				}
 				peers := region.GetPeers()
 				leader = peers[rand.Int()%len(peers)]
-				log.Debugf("leader info maybe wrong, use random leader %d of region %d", leader.GetId(), regionID)
+				// log.Debugf("leader info maybe wrong, use random leader %d of region %d", leader.GetId(), regionID)
 			} else {
 				leader = newLeader
-				log.Debugf("use new leader %d of region %d", leader.GetId(), regionID)
+				// log.Debugf("use new leader %d of region %d", leader.GetId(), regionID)
 			}
 			continue
 		}
 		if resp.Header.Error != nil {
 			err := resp.Header.Error
 			if err.GetStaleCommand() != nil || err.GetEpochNotMatch() != nil || err.GetNotLeader() != nil {
-				log.Debugf("encouter retryable err %+v", resp)
+				// log.Debugf("encouter retryable err %+v", resp)
 				if err.GetNotLeader() != nil && err.GetNotLeader().Leader != nil {
 					leader = err.GetNotLeader().Leader
 				} else {
@@ -276,7 +294,7 @@ func (c *Cluster) GetRegion(key []byte) *metapb.Region {
 		// retry to get the region again.
 		SleepMS(20)
 	}
-	panic(fmt.Sprintf("find no region for %s", hex.EncodeToString(key)))
+	panic(fmt.Sprintf("find no region for %s int %v", hex.EncodeToString(key), c.schedulerClient.regionsRange))
 }
 
 func (c *Cluster) GetRandomRegion() *metapb.Region {

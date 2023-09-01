@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -37,8 +36,9 @@ type RegionTaskApply struct {
 }
 
 type RegionTaskDestroy struct {
-	RegionId uint64 // specify the region which the task is for.
-	StartKey []byte // `StartKey` and `EndKey` are used to destroy certain range of region.
+	RegionId uint64          // specify the region which the task is for.
+	Notifier chan<- struct{} // when it finishes deleting, it notifies notifier.
+	StartKey []byte          // `StartKey` and `EndKey` are used to destroy certain range of region.
 	EndKey   []byte
 }
 
@@ -46,11 +46,12 @@ type regionTaskHandler struct {
 	ctx *snapContext
 }
 
-func NewRegionTaskHandler(engines *engine_util.Engines, mgr *snap.SnapManager) *regionTaskHandler {
+func NewRegionTaskHandler(engines *engine_util.Engines, mgr *snap.SnapManager, storeID uint64) *regionTaskHandler {
 	return &regionTaskHandler{
 		ctx: &snapContext{
 			engines: engines,
 			mgr:     mgr,
+			storeID: storeID,
 		},
 	}
 }
@@ -68,6 +69,9 @@ func (r *regionTaskHandler) Handle(t worker.Task) {
 	case *RegionTaskDestroy:
 		task := t.(*RegionTaskDestroy)
 		r.ctx.cleanUpRange(task.RegionId, task.StartKey, task.EndKey)
+		// if task.Notifier != nil {
+		// 	task.Notifier <- struct{}{}
+		// }
 	}
 }
 
@@ -75,6 +79,7 @@ type snapContext struct {
 	engines   *engine_util.Engines
 	batchSize uint64
 	mgr       *snap.SnapManager
+	storeID   uint64
 }
 
 // handleGen handles the task of generating snapshot of the Region.
@@ -130,12 +135,14 @@ func (snapCtx *snapContext) handleApply(regionId uint64, notifier chan<- bool, s
 
 // cleanUpRange cleans up the data within the range.
 func (snapCtx *snapContext) cleanUpRange(regionId uint64, startKey, endKey []byte) {
+	log.Infof("region %v store %v: start to delete data in range. [%s, %s]",
+		regionId, snapCtx.storeID, string(startKey), string(endKey))
 	if err := engine_util.DeleteRange(snapCtx.engines.Kv, startKey, endKey); err != nil {
 		log.Fatalf("failed to delete data in range, [regionId: %d, startKey: %s, endKey: %s, err: %v]", regionId,
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey), err)
+			string(startKey), string(endKey), err)
 	} else {
-		log.Infof("succeed in deleting data in range. [regionId: %d, startKey: %s, endKey: %s]", regionId,
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		log.Infof("region %v store %v: finish deleting data in range. [%s, %s]",
+			regionId, snapCtx.storeID, string(startKey), string(endKey))
 	}
 }
 

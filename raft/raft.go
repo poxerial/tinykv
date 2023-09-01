@@ -167,7 +167,8 @@ type Raft struct {
 	heartbeatsReceived int
 
 	// whether it is safe to read data without commit entries
-	readable bool
+	readable           bool
+	logIndexOnElection uint64
 
 	// there is no need to send snapshot to the same peer twice in one turn
 	hasSentSnap map[uint64]struct{}
@@ -344,6 +345,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 }
 
 func (r *Raft) elect() {
+	log.Infof("%v starts to elect", r.id)
 	r.electionElapsed = 0
 
 	if len(r.Prs) == 1 {
@@ -384,6 +386,7 @@ func (r *Raft) becomeLeader() {
 	r.Lead = r.id
 	r.State = StateLeader
 	r.readable = false
+	r.logIndexOnElection = r.RaftLog.logIndex()
 	r.heartbeatsReceived = 0
 	r.heartbeatElapsed = r.heartbeatTimeout
 	r.leadTransferee = 0
@@ -411,7 +414,7 @@ func (r *Raft) bcastHeartbeat() {
 		}
 	}
 	r.heartbeatElapsed = 0
-	if r.heartbeatsReceived+1 > len(r.Prs)/2 {
+	if r.heartbeatsReceived+1 > len(r.Prs)/2 && r.RaftLog.applied >= r.logIndexOnElection {
 		r.readable = true
 	} else {
 		r.readable = false
@@ -427,7 +430,7 @@ func (r *Raft) bcastHeartbeatZero() {
 		}
 	}
 	r.heartbeatElapsed = 0
-	if r.heartbeatsReceived+1 > len(r.Prs)/2 {
+	if r.heartbeatsReceived+1 > len(r.Prs)/2 && r.RaftLog.applied >= r.logIndexOnElection {
 		r.readable = true
 	} else {
 		r.readable = false
@@ -628,12 +631,7 @@ func (r *Raft) updateCommit(m pb.Message) {
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
 	msg := r.newMessage(pb.MessageType_MsgAppendResponse, m.From)
-
 	defer r.send(msg)
-
-	if len(m.Entries) != 0 && len(m.Entries[0].Data) != 0 {
-		log.Debugf("debug")
-	}
 
 	if m.Term < r.Term {
 		msg.Reject = true

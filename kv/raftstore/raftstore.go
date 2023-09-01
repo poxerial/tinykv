@@ -104,8 +104,8 @@ type Transport interface {
 	Send(msg *rspb.RaftMessage) error
 }
 
-/// loadPeers loads peers in this store. It scans the db engine, loads all regions and their peers from it
-/// WARN: This store should not be used before initialized.
+// / loadPeers loads peers in this store. It scans the db engine, loads all regions and their peers from it
+// / WARN: This store should not be used before initialized.
 func (bs *Raftstore) loadPeers() ([]*peer, error) {
 	// Scan region meta to get saved regions.
 	startKey := meta.RegionMetaMinKey
@@ -278,7 +278,7 @@ func (bs *Raftstore) startWorkers(peers []*peer) {
 	engines := ctx.engine
 	cfg := ctx.cfg
 	workers.splitCheckWorker.Start(runner.NewSplitCheckHandler(engines.Kv, NewRaftstoreRouter(router), cfg))
-	workers.regionWorker.Start(runner.NewRegionTaskHandler(engines, ctx.snapMgr))
+	workers.regionWorker.Start(runner.NewRegionTaskHandler(engines, ctx.snapMgr, bs.ctx.store.Id))
 	workers.raftLogGCWorker.Start(runner.NewRaftLogGCTaskHandler())
 	workers.schedulerWorker.Start(runner.NewSchedulerTaskHandler(ctx.store.Id, ctx.schedulerClient, NewRaftstoreRouter(router)))
 	go bs.tickDriver.run()

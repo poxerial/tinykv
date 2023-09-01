@@ -230,7 +230,6 @@ func (rn *RawNode) HasReady() bool {
 		return true
 	}
 
-	// 2C
 	if rn.Raft.RaftLog.pendingSnapshot != nil {
 		return true
 	}

@@ -1,8 +1,6 @@
 package runner
 
 import (
-	"encoding/hex"
-
 	"github.com/Connor1996/badger"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/message"
@@ -33,7 +31,7 @@ func NewSplitCheckHandler(engine *badger.DB, router message.RaftRouter, conf *co
 	return runner
 }
 
-/// run checks a region with split checkers to produce split keys and generates split admin command.
+// / run checks a region with split checkers to produce split keys and generates split admin command.
 func (r *splitCheckHandler) Handle(t worker.Task) {
 	spCheckTask, ok := t.(*SplitCheckTask)
 	if !ok {
@@ -42,8 +40,8 @@ func (r *splitCheckHandler) Handle(t worker.Task) {
 	}
 	region := spCheckTask.Region
 	regionId := region.Id
-	log.Debugf("executing split check worker.Task: [regionId: %d, startKey: %s, endKey: %s]", regionId,
-		hex.EncodeToString(region.StartKey), hex.EncodeToString(region.EndKey))
+	// log.Debugf("executing split check worker.Task: [regionId: %d, startKey: %s, endKey: %s]", regionId,
+	// hex.EncodeToString(region.StartKey), hex.EncodeToString(region.EndKey))
 	key := r.splitCheck(regionId, region.StartKey, region.EndKey)
 	if key != nil {
 		_, userKey, err := codec.DecodeBytes(key)
@@ -65,11 +63,11 @@ func (r *splitCheckHandler) Handle(t worker.Task) {
 			log.Warnf("failed to send check result: [regionId: %d, err: %v]", regionId, err)
 		}
 	} else {
-		log.Debugf("no need to send, split key not found: [regionId: %v]", regionId)
+		// log.Debugf("no need to send, split key not found: [regionId: %v]", regionId)
 	}
 }
 
-/// SplitCheck gets the split keys by scanning the range.
+// / SplitCheck gets the split keys by scanning the range.
 func (r *splitCheckHandler) splitCheck(regionID uint64, startKey, endKey []byte) []byte {
 	txn := r.engine.NewTransaction(false)
 	defer txn.Discard()

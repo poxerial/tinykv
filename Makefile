@@ -94,6 +94,12 @@ project2c:
 	$(GOTEST) ./kv/test_raftstore -run ^TestSnapshotUnreliableRecoverConcurrentPartition2C$ || true
 	$(TEST_CLEAN)
 
+project2final:
+	$(TEST_CLEAN)
+	$(GOTEST) ./kv/test_raftstore -run ^TestSnapshotUnreliableRecoverConcurrentPartition2C$
+	$(TEST_CLEAN)
+
+
 project3: project3a project3b project3c
 
 project3a:
@@ -118,6 +124,27 @@ project3b:
 	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChangeSnapshotUnreliableRecover3B$ || true
 	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B$ || true
 	$(TEST_CLEAN)
+
+project3b1:
+	$(TEST_CLEAN)
+	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChange3B$ 
+	$(TEST_CLEAN)
+
+project3b2:
+	$(TEST_CLEAN)
+	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConcurrentSnapshot3B$ 
+	$(TEST_CLEAN)
+
+project3b3:
+	$(TEST_CLEAN)
+	$(GOTEST) ./kv/test_raftstore -run ^TestSplitPartition3B$ 
+	$(TEST_CLEAN)
+
+project3bfinal:
+	$(TEST_CLEAN)
+	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B$ 
+	$(TEST_CLEAN)
+
 
 project3c:
 	$(GOTEST) ./scheduler/server ./scheduler/server/schedulers -check.f="3C"

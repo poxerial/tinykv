@@ -12,37 +12,112 @@ import (
 	"time"
 
 	"github.com/Connor1996/badger"
+	"github.com/google/btree"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
+	"github.com/pingcap-incubator/tinykv/kv/storage/raft_storage"
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/log"
+	"github.com/pingcap-incubator/tinykv/proto/pkg/metapb"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	"github.com/stretchr/testify/assert"
 )
 
+func (c *Cluster) sprintRegionsRange() string {
+	str := ""
+	c.schedulerClient.RLock()
+	defer c.schedulerClient.RUnlock()
+
+	c.schedulerClient.regionsRange.Ascend(func(i btree.Item) bool {
+		region_item := i.(*regionItem)
+		str = str + fmt.Sprintf("\n%+v", region_item)
+		return true
+	})
+	return str
+}
+
+func checkOnValue(value []byte, cli, k int) bool {
+	var cli_get, k_get int
+	fmt.Sscanf(string(value), "x %d %d y", &cli_get, &k_get)
+	if cli_get != cli || k_get != k {
+		return false
+	}
+	return true
+}
+
+// check values is like ["x {cli} 0 y", "x {cli} 1 y", ..., "x {cli} {j - 1} y"]
+func (c *Cluster) scanAndCheck(start, end []byte, cli int, j int) {
+	req := NewSnapCmd()
+	key := start
+	var region *metapb.Region
+	i := 0
+	for (len(end) != 0 && bytes.Compare(key, end) < 0) || (len(key) == 0 && len(end) == 0) {
+		resp, txn := c.Request(key, []*raft_cmdpb.Request{req}, 5*time.Second)
+		if resp.Header.Error != nil {
+			panic(resp.Header.Error)
+		}
+		if len(resp.Responses) != 1 {
+			panic("len(resp.Responses) != 1")
+		}
+		if resp.Responses[0].CmdType != raft_cmdpb.CmdType_Snap {
+			panic("resp.Responses[0].CmdType != raft_cmdpb.CmdType_Snap")
+		}
+		region = resp.Responses[0].GetSnap().Region
+		iter := raft_storage.NewRegionReader(txn, *region).IterCF(engine_util.CfDefault)
+		for iter.Seek(key); iter.Valid(); iter.Next() {
+			if engine_util.ExceedEndKey(iter.Item().Key(), end) {
+				break
+			}
+			value, err := iter.Item().ValueCopy(nil)
+			if err != nil {
+				panic(err)
+			}
+			if !checkOnValue(value, cli, i) {
+				panic(fmt.Sprintf("want \"x %v %v y\" got %v \nin region %v with region range %v",
+					cli, i, string(value), region, c.sprintRegionsRange()))
+			}
+			i++
+		}
+		iter.Close()
+
+		key = region.EndKey
+		if len(key) == 0 {
+			break
+		}
+	}
+	if i != j {
+		err_msg := fmt.Sprintf("client %v value number not match: want %v, got %v with region range %v",
+			cli, j, i, c.sprintRegionsRange())
+		log.Info(err_msg)
+		panic(err_msg)
+	}
+}
+
 // a client runs the function f and then signals it is done
-func runClient(t *testing.T, me int, ca chan bool, fn func(me int, t *testing.T)) {
+func runClient(me int, ca chan bool, fn func(me int)) {
 	ok := false
-	defer func() { ca <- ok }()
-	fn(me, t)
+	defer func() {
+		ca <- ok
+	}()
+	fn(me)
 	ok = true
 }
 
 // spawn ncli clients and wait until they are all done
-func SpawnClientsAndWait(t *testing.T, ch chan bool, ncli int, fn func(me int, t *testing.T)) {
+func SpawnClientsAndWait(ch chan bool, ncli int, fn func(me int)) {
 	defer func() { ch <- true }()
 	ca := make([]chan bool, ncli)
 	for cli := 0; cli < ncli; cli++ {
 		ca[cli] = make(chan bool)
-		go runClient(t, cli, ca[cli], fn)
+		go runClient(cli, ca[cli], fn)
 	}
 	// log.Printf("SpawnClientsAndWait: waiting for clients")
 	for cli := 0; cli < ncli; cli++ {
-		ok := <-ca[cli]
+		/* ok := */ <-ca[cli]
 		// log.Infof("SpawnClientsAndWait: client %d is done\n", cli)
-		if ok == false {
-			t.Fatalf("failure")
-		}
+		// if ok == false {
+		// 	log.Fatalf("failure")
+		// }
 	}
 
 }
@@ -194,10 +269,10 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		clnts[i] = make(chan int, 1)
 	}
 	for i := 0; i < 3; i++ {
-		// log.Printf("Iteration %v\n", i)
+		log.Infof("Iteration %v\n", i)
 		atomic.StoreInt32(&done_clients, 0)
 		atomic.StoreInt32(&done_partitioner, 0)
-		go SpawnClientsAndWait(t, ch_clients, nclients, func(cli int, t *testing.T) {
+		go SpawnClientsAndWait(ch_clients, nclients, func(cli int) {
 			j := 0
 			defer func() {
 				clnts[cli] <- j
@@ -215,11 +290,12 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 					start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 					end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 					// log.Infof("%d: client new scan %v-%v\n", cli, start, end)
-					values := cluster.Scan([]byte(start), []byte(end))
-					v := string(bytes.Join(values, []byte("")))
-					if v != last {
-						log.Fatalf("get wrong value, client %v\nwant:%v\ngot: %v\n", cli, last, v)
-					}
+					cluster.scanAndCheck([]byte(start), []byte(end), cli, j)
+					// values := cluster.Scan([]byte(start), []byte(end))
+					// v := string(bytes.Join(values, []byte("")))
+					// if v != last {
+					// 	log.Fatalf("get wrong value, client %v\nwant:%v\ngot: %v\n", cli, last, v)
+					// }
 				}
 			}
 		})
@@ -268,18 +344,20 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			}
 		}
 
+		log.Infof("Iteration %v start to delete", i)
 		for cli := 0; cli < nclients; cli++ {
-			// log.Printf("read from clients %d\n", cli)
+			// log.Infof("read from clients %d\n", cli)
 			j := <-clnts[cli]
 
-			// if j < 10 {
-			// 	log.Printf("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
-			// }
+			if j < 10 {
+				// log.Infof("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
+			}
 			start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 			end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
-			values := cluster.Scan([]byte(start), []byte(end))
-			v := string(bytes.Join(values, []byte("")))
-			checkClntAppends(t, cli, v, j)
+			cluster.scanAndCheck([]byte(start), []byte(end), cli, j)
+			// values := cluster.Scan([]byte(start), []byte(end))
+			// v := string(bytes.Join(values, []byte("")))
+			// checkClntAppends(t, cli, v, j)
 
 			for k := 0; k < j; k++ {
 				key := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", k)
@@ -326,6 +404,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 				t.Fatalf("region is not split")
 			}
 		}
+		log.Infof("Iteration %v finished", i)
 	}
 }
 
@@ -739,4 +818,20 @@ func TestSplitConfChangeSnapshotUnreliableRecover3B(t *testing.T) {
 func TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B(t *testing.T) {
 	// Test: unreliable net, restarts, partitions, snapshots, conf change, many clients (3B) ...
 	GenericTest(t, "3B", 5, true, true, true, 100, true, true)
+}
+
+func TestSplitConfChangeConcurrentSnapshot3B(t *testing.T) {
+	GenericTest(t, "3B", 5, false, false, false, 100, true, true)
+}
+
+func TestSplitConcurrentSnapshot3B(t *testing.T) {
+	GenericTest(t, "3B", 5, false, false, false, 100, false, true)
+}
+
+func TestSplitPartition3B(t *testing.T) {
+	GenericTest(t, "3B", 1, false, false, true, -1, false, true)
+}
+
+func TestSplitConfChange3B(t *testing.T) {
+	GenericTest(t, "3B", 1, false, false, false, -1, true, true)
 }

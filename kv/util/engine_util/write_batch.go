@@ -50,10 +50,14 @@ func (wb *WriteBatch) DeleteCF(cf string, key []byte) {
 }
 
 func (wb *WriteBatch) SetMeta(key []byte, msg proto.Message) error {
-	region_state, success := msg.(*rspb.RegionLocalState)
-	if success {
+	if region_state, success := msg.(*rspb.RegionLocalState); success {
 		if region_state.Region == nil || ExceedEndKey(region_state.Region.StartKey, region_state.Region.EndKey) {
 			panic("invalid region!")
+		}
+	}
+	if apply_state, success := msg.(*rspb.RaftApplyState); success {
+		if apply_state.TruncatedState.Index < 5 {
+			panic("truncated index can't be less than 5!")
 		}
 	}
 	val, err := proto.Marshal(msg)

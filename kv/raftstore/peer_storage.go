@@ -411,9 +411,10 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, error) {
 	// Hint: you may call `Append()` and `ApplySnapshot()` in this function
 	// Your Code Here (2B/2C).
+	var err error
 	rfWB := &engine_util.WriteBatch{}
 
-	state, err := meta.GetRaftLocalState(ps.Engines.Raft, ps.region.Id)
+	state := ps.raftState
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
 			state = &rspb.RaftLocalState{
@@ -425,7 +426,6 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	}
 	if ready.HardState.Term != 0 {
 		state.HardState = &ready.HardState
-		ps.raftState.HardState = &ready.HardState
 	}
 
 	var last_index, last_term uint64
@@ -463,8 +463,6 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	if last_index != 0 {
 		state.LastIndex = last_index
 		state.LastTerm = last_term
-		ps.raftState.LastIndex = last_index
-		ps.raftState.LastTerm = last_term
 	}
 
 	err = rfWB.SetMeta(meta.RaftStateKey(ps.region.Id), state)

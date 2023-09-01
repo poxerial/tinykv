@@ -22,12 +22,16 @@ type router struct {
 	peers       sync.Map // regionID -> peerState
 	peerSender  chan message.Msg
 	storeSender chan<- message.Msg
+
+	// used for debug
+	p map[uint64]*peer
 }
 
 func newRouter(storeSender chan<- message.Msg) *router {
 	pm := &router{
 		peerSender:  make(chan message.Msg, 40960),
 		storeSender: storeSender,
+		p:           make(map[uint64]*peer),
 	}
 	return pm
 }
@@ -46,6 +50,7 @@ func (pr *router) register(peer *peer) {
 		peer: peer,
 	}
 	pr.peers.Store(id, newPeer)
+	pr.p[id] = peer
 }
 
 func (pr *router) close(regionID uint64) {
@@ -54,6 +59,7 @@ func (pr *router) close(regionID uint64) {
 		ps := v.(*peerState)
 		atomic.StoreUint32(&ps.closed, 1)
 		pr.peers.Delete(regionID)
+		delete(pr.p, regionID)
 	}
 }
 
