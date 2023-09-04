@@ -119,7 +119,7 @@ func NewPeer(storeId uint64, cfg *config.Config, engines *engine_util.Engines, r
 	if meta.GetId() == util.InvalidID {
 		return nil, fmt.Errorf("invalid peer id")
 	}
-	tag := fmt.Sprintf("[region %v] %v", region.GetId(), meta.GetId())
+	tag := fmt.Sprintf("[store %v, region %v, peer %v]", storeId, region.GetId(), meta.GetId())
 
 	ps, err := NewPeerStorage(engines, region, regionSched, tag)
 	if err != nil {

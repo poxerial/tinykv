@@ -323,7 +323,8 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 
 // Apply the peer with given snapshot
 func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_util.WriteBatch, raftWB *engine_util.WriteBatch) (*ApplySnapResult, error) {
-	log.Infof("%v, begin to apply snapshot", ps.Tag)
+	log.Infof("%v begin to apply snapshot", ps.Tag)
+	defer log.Infof("%v finish applying snapshot", ps.Tag)
 	snapData := new(rspb.RaftSnapshotData)
 	if err := snapData.Unmarshal(snapshot.Data); err != nil {
 		return nil, err
@@ -337,8 +338,8 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		RegionId: snapData.Region.Id,
 		Notifier: done,
 		SnapMeta: snapshot.Metadata,
-		StartKey: snapData.Region.StartKey,
-		EndKey:   snapData.Region.EndKey,
+		StartKey: ps.region.StartKey,
+		EndKey:   ps.region.EndKey,
 	}
 
 	success := <-done
@@ -347,9 +348,6 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 	}
 
 	ps.snapState.StateType = snap.SnapState_Relax
-
-	ps.clearMeta(kvWB, raftWB)
-	ps.clearExtraData(snapData.Region)
 
 	snap_meta := snapshot.Metadata
 
