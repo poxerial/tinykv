@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"reflect"
 	"sync"
 	"time"
 
@@ -279,6 +280,31 @@ func (c *RaftCluster) handleStoreHeartbeat(stats *schedulerpb.StoreStats) error 
 // processRegionHeartbeat updates the region information.
 func (c *RaftCluster) processRegionHeartbeat(region *core.RegionInfo) error {
 	// Your Code Here (3C).
+	old := c.core.GetRegion(region.GetID())
+	if old != nil &&
+		(region.GetRegionEpoch().ConfVer < old.GetRegionEpoch().ConfVer ||
+			region.GetRegionEpoch().Version < old.GetRegionEpoch().Version) {
+		return nil
+	}
+
+	overlaps := c.core.GetOverlaps(region)
+	for _, overlaped_region := range overlaps {
+		if region.GetRegionEpoch().ConfVer < overlaped_region.GetRegionEpoch().ConfVer ||
+			region.GetRegionEpoch().Version < overlaped_region.GetRegionEpoch().Version {
+			return nil
+		}
+	}
+
+	if old != nil &&
+		region.GetRegionEpoch().ConfVer == old.GetRegionEpoch().ConfVer &&
+		region.GetRegionEpoch().Version == old.GetRegionEpoch().Version &&
+		region.GetLeader().Id == old.GetLeader().Id &&
+		reflect.DeepEqual(region.GetPendingPeers(), old.GetPendingPeers()) &&
+		region.GetApproximateSize() == old.GetApproximateSize() {
+		return nil
+	}
+
+	c.core.PutRegion(region)
 
 	return nil
 }

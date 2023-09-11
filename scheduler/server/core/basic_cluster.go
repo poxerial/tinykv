@@ -274,7 +274,29 @@ func (bc *BasicCluster) TakeStore(storeID uint64) *StoreInfo {
 func (bc *BasicCluster) PutRegion(region *RegionInfo) []*RegionInfo {
 	bc.Lock()
 	defer bc.Unlock()
-	return bc.Regions.SetRegion(region)
+	old := bc.Regions.GetRegion(region.GetID())
+	if old == nil {
+		store_infos := make(map[uint64]*StoreInfo, len(region.GetPeers()))
+		for _, peer := range region.GetPeers() {
+			store_info := bc.Stores.GetStore(peer.StoreId)
+			store_info.RegionCount += 1
+			store_info.RegionSize += region.approximateSize
+			if peer.Id == region.leader.Id {
+				store_info.LeaderCount += 1
+				store_info.LeaderSize += region.GetApproximateSize()
+			}
+			store_infos[peer.Id] = store_info
+		}
+		for _, pending_peer := range region.GetPendingPeers() {
+			store_infos[pending_peer.Id].PendingPeerCount++
+		}
+		for _, store_info := range store_infos {
+			bc.Stores.SetStore(store_info)
+		}
+		return bc.Regions.SetRegion(region)
+	}
+	new_peers := region.GetDiffFollowers(old)
+
 }
 
 // RemoveRegion removes RegionInfo from regionTree and regionMap.

@@ -15,6 +15,7 @@
 package raft
 
 import (
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -70,6 +71,8 @@ func newLog(storage Storage) *RaftLog {
 	}
 	entries, err := storage.Entries(fi, li+1)
 	if err != nil {
+		log.Error(err)
+		log.Errorf("error happens when fetching logs in range [%v, %v)", fi, li+1)
 		panic(err.Error())
 	}
 
@@ -110,6 +113,7 @@ func (l *RaftLog) HandleSnapApply(snap *pb.Snapshot) {
 
 	l.applied = snap.Metadata.Index
 	l.stabled = snap.Metadata.Index
+	l.committed = max(l.committed, l.applied)
 	l.entries = make([]pb.Entry, 0)
 }
 

@@ -98,9 +98,7 @@ func (snapCtx *snapContext) applySnap(regionId uint64, startKey, endKey []byte, 
 	log.Infof("begin apply snap data. [regionId: %d]", regionId)
 
 	// cleanUpOriginData clear up the region data before applying snapshot
-	if len(startKey) != 0 || len(endKey) != 0 {
-		snapCtx.cleanUpRange(regionId, startKey, endKey)
-	}
+	snapCtx.cleanUpRange(regionId, startKey, endKey)
 
 	snapKey := snap.SnapKey{RegionID: regionId, Index: snapMeta.Index, Term: snapMeta.Term}
 	snapCtx.mgr.Register(snapKey, snap.SnapEntryApplying)

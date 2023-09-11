@@ -142,9 +142,8 @@ project3b3:
 
 project3bfinal:
 	$(TEST_CLEAN)
-	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B$ 
+	$(GOTEST) ./kv/test_raftstore -run ^TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B$
 	$(TEST_CLEAN)
-
 
 project3c:
 	$(GOTEST) ./scheduler/server ./scheduler/server/schedulers -check.f="3C"

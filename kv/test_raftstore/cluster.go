@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Connor1996/badger"
+	"github.com/google/btree"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
@@ -52,6 +53,19 @@ func NewCluster(count int, schedulerClient *MockSchedulerClient, simulator Simul
 		cfg:             cfg,
 		baseDir:         "test-raftstore",
 	}
+}
+
+func (c *Cluster) SprintRegionsRange() string {
+	str := ""
+	c.schedulerClient.RLock()
+	defer c.schedulerClient.RUnlock()
+
+	c.schedulerClient.regionsRange.Ascend(func(i btree.Item) bool {
+		region_item := i.(*regionItem)
+		str = str + fmt.Sprintf("\n%+v", region_item)
+		return true
+	})
+	return str
 }
 
 func (c *Cluster) Start() {
@@ -294,6 +308,8 @@ func (c *Cluster) GetRegion(key []byte) *metapb.Region {
 		// retry to get the region again.
 		SleepMS(20)
 	}
+	log.Infof("find no region for %s", string(key))
+	log.Infof("regionRange: %v", c.SprintRegionsRange())
 	panic(fmt.Sprintf("find no region for %s int %v", hex.EncodeToString(key), c.schedulerClient.regionsRange))
 }
 

@@ -290,7 +290,7 @@ func (r *Raft) sendSnapshot(to uint64) {
 
 	*snapshot, err = r.RaftLog.storage.Snapshot()
 	if err != nil {
-		snapshot = nil
+		return
 	}
 
 	msg := r.newMessage(pb.MessageType_MsgSnapshot, to)
@@ -368,7 +368,6 @@ func (r *Raft) elect() {
 		msg.LogTerm = r.RaftLog.logTerm()
 		r.send(msg)
 	}
-
 }
 
 func (r *Raft) becomeCandidate() {
@@ -416,8 +415,10 @@ func (r *Raft) bcastHeartbeat() {
 	r.heartbeatElapsed = 0
 	if r.heartbeatsReceived+1 > len(r.Prs)/2 && r.RaftLog.applied >= r.logIndexOnElection {
 		r.readable = true
+		log.Debugf("%v win leader authority", r.id)
 	} else {
 		r.readable = false
+		log.Debugf("%v lose leader authority, want %v, got %v, applied index %v, log_indx_on_election %v", r.id, len(r.Prs)/2+1, r.heartbeatsReceived+1, r.RaftLog.applied, r.logIndexOnElection)
 	}
 	r.heartbeatsReceived = 0
 }
@@ -432,8 +433,10 @@ func (r *Raft) bcastHeartbeatZero() {
 	r.heartbeatElapsed = 0
 	if r.heartbeatsReceived+1 > len(r.Prs)/2 && r.RaftLog.applied >= r.logIndexOnElection {
 		r.readable = true
+		log.Debugf("%v win leader authority", r.id)
 	} else {
 		r.readable = false
+		log.Debugf("%v lose leader authority, want %v, got %v, applied index %v, log_indx_on_election %v", r.id, len(r.Prs)/2+1, r.heartbeatsReceived+1, r.RaftLog.applied, r.logIndexOnElection)
 	}
 	r.heartbeatsReceived = 0
 }
@@ -803,9 +806,11 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 	if term != m.LogTerm {
 		msg.Reject = true
 		msg.Index = m.Index - 1
+		return
 	} else {
 		r.updateCommit(m)
 	}
+	msg.Reject = false
 	msg.Index = r.RaftLog.logIndex()
 }
 
@@ -813,11 +818,11 @@ func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 	if r.State != StateLeader {
 		return
 	}
+	r.heartbeatsReceived++
 	if m.Reject {
 		r.Prs[m.From].Next = m.Index + 1
 		r.sendAppend(m.From)
 	} else {
-		r.heartbeatsReceived++
 		if m.Index < r.RaftLog.logIndex() {
 			r.Prs[m.From].Next = m.Index + 1
 			r.sendAppend(m.From)
@@ -897,8 +902,11 @@ func (r *Raft) addNode(id uint64) {
 // removeNode remove a node from raft group
 func (r *Raft) removeNode(id uint64) {
 	// Your Code Here (3A).
+	if id == r.id {
+		return
+	}
 	delete(r.Prs, id)
-	if len(r.Prs) > 0 {
+	if len(r.Prs) > 0 && r.State == StateLeader {
 		r.checkCommit()
 	}
 }

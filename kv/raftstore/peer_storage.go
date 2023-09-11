@@ -123,6 +123,7 @@ func (ps *PeerStorage) Entries(low, high uint64) ([]eraftpb.Entry, error) {
 	if len(buf) == int(high-low) {
 		return buf, nil
 	}
+	log.Errorf("region %v: can't fetch enough logs, requested [%v, %v), got [%v, %v)", ps.region.Id, low, high, low, int(low)+len(buf))
 	// Here means we don't fetch enough entries.
 	return nil, raft.ErrUnavailable
 }
@@ -322,9 +323,9 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 }
 
 // Apply the peer with given snapshot
-func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_util.WriteBatch, raftWB *engine_util.WriteBatch) (*ApplySnapResult, error) {
+func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_util.WriteBatch) (*ApplySnapResult, error) {
 	log.Infof("%v begin to apply snapshot", ps.Tag)
-	defer log.Infof("%v finish applying snapshot", ps.Tag)
+	defer log.Infof("%v finish applying snapshot to %v", ps.Tag, snapshot.Metadata.Index)
 	snapData := new(rspb.RaftSnapshotData)
 	if err := snapData.Unmarshal(snapshot.Data); err != nil {
 		return nil, err
@@ -334,12 +335,22 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 
 	done := make(chan bool, 1)
 
+	var start_key, end_key []byte
+	if len(ps.region.Peers) == 0 {
+		// created by mayBeCreatePeer
+		start_key = snapData.Region.StartKey
+		end_key = snapData.Region.EndKey
+	} else {
+		start_key = ps.region.StartKey
+		end_key = ps.region.EndKey
+	}
+
 	ps.regionSched <- &runner.RegionTaskApply{
 		RegionId: snapData.Region.Id,
 		Notifier: done,
 		SnapMeta: snapshot.Metadata,
-		StartKey: ps.region.StartKey,
-		EndKey:   ps.region.EndKey,
+		StartKey: start_key,
+		EndKey:   end_key,
 	}
 
 	success := <-done
@@ -376,19 +387,19 @@ func (ps *PeerStorage) ApplySnapshot(snapshot *eraftpb.Snapshot, kvWB *engine_ut
 		}
 	}
 
-	raft := ps.raftState
-	if raft.HardState.Commit < snap_meta.Index {
-		raft.HardState.Commit = snap_meta.Index
-	}
-	if raft.LastIndex < snap_meta.Index {
-		raft.LastIndex = snap_meta.Index
-		raft.LastTerm = snap_meta.Term
-	}
+	// raft := ps.raftState
+	// if raft.HardState.Commit < snap_meta.Index {
+	// 	raft.HardState.Commit = snap_meta.Index
+	// }
+	// if raft.LastIndex < snap_meta.Index {
+	// 	raft.LastIndex = snap_meta.Index
+	// 	raft.LastTerm = snap_meta.Term
+	// }
 
-	err = raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), raft)
-	if err != nil {
-		return nil, err
-	}
+	// err = raftWB.SetMeta(meta.RaftStateKey(ps.region.Id), raft)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	ps.region = snapData.Region
 
@@ -413,15 +424,6 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	rfWB := &engine_util.WriteBatch{}
 
 	state := ps.raftState
-	if err != nil {
-		if err == badger.ErrKeyNotFound {
-			state = &rspb.RaftLocalState{
-				HardState: &eraftpb.HardState{},
-			}
-		} else {
-			return nil, err
-		}
-	}
 	if ready.HardState.Term != 0 {
 		state.HardState = &ready.HardState
 	}
@@ -441,7 +443,7 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 	var result *ApplySnapResult
 	if len(ready.Snapshot.Data) != 0 {
 		kvWB := &engine_util.WriteBatch{}
-		result, err = ps.ApplySnapshot(&ready.Snapshot, kvWB, rfWB)
+		result, err = ps.ApplySnapshot(&ready.Snapshot, kvWB)
 		if err != nil {
 			return nil, err
 		}
@@ -449,6 +451,11 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 			if last_index < ready.Snapshot.Metadata.Index {
 				last_index = ready.Snapshot.Metadata.Index
 				last_term = ready.Snapshot.Metadata.Term
+			}
+			if state.HardState.Commit < ready.Snapshot.Metadata.Index {
+				state.HardState.Commit = ready.Snapshot.Metadata.Index
+				state.HardState.Term = ready.Snapshot.Metadata.Term
+				state.HardState.Vote = 0
 			}
 			wg.Add(1)
 			go func() {

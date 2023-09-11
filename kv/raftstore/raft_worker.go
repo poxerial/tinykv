@@ -2,8 +2,10 @@ package raftstore
 
 import (
 	"sync"
+	"time"
 
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/message"
+	"github.com/pingcap-incubator/tinykv/log"
 )
 
 // raftWorker is responsible for run raft commands and apply raft logs.
@@ -45,6 +47,7 @@ func (rw *raftWorker) run(closeCh <-chan struct{}, wg *sync.WaitGroup) {
 		for i := 0; i < pending; i++ {
 			msgs = append(msgs, <-rw.raftCh)
 		}
+		begin := time.Now()
 		peerStateMap := make(map[uint64]*peerState)
 		for _, msg := range msgs {
 			peerState := rw.getPeerState(peerStateMap, msg.RegionID)
@@ -55,6 +58,10 @@ func (rw *raftWorker) run(closeCh <-chan struct{}, wg *sync.WaitGroup) {
 		}
 		for _, peerState := range peerStateMap {
 			newPeerMsgHandler(peerState.peer, rw.ctx).HandleRaftReady()
+		}
+		elapsed := time.Since(begin)
+		if elapsed > time.Millisecond*10 {
+			log.Warnf("raft worker %v cost %v in one turn", rw.ctx.store.Id, elapsed)
 		}
 	}
 }

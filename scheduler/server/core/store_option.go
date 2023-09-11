@@ -27,95 +27,95 @@ type StoreCreateOption func(region *StoreInfo)
 // SetStoreAddress sets the address for the store.
 func SetStoreAddress(address string) StoreCreateOption {
 	return func(store *StoreInfo) {
-		meta := proto.Clone(store.meta).(*metapb.Store)
+		meta := proto.Clone(store.Meta).(*metapb.Store)
 		meta.Address = address
-		store.meta = meta
+		store.Meta = meta
 	}
 }
 
 // SetStoreState sets the state for the store.
 func SetStoreState(state metapb.StoreState) StoreCreateOption {
 	return func(store *StoreInfo) {
-		meta := proto.Clone(store.meta).(*metapb.Store)
+		meta := proto.Clone(store.Meta).(*metapb.Store)
 		meta.State = state
-		store.meta = meta
+		store.Meta = meta
 	}
 }
 
 // SetStoreBlock stops balancer from selecting the store.
 func SetStoreBlock() StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.blocked = true
+		store.Blocked = true
 	}
 }
 
 // SetStoreUnBlock allows balancer to select the store.
 func SetStoreUnBlock() StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.blocked = false
+		store.Blocked = false
 	}
 }
 
 // SetLeaderCount sets the leader count for the store.
 func SetLeaderCount(leaderCount int) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.leaderCount = leaderCount
+		store.LeaderCount = leaderCount
 	}
 }
 
 // SetRegionCount sets the Region count for the store.
 func SetRegionCount(regionCount int) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.regionCount = regionCount
+		store.RegionCount = regionCount
 	}
 }
 
 // SetPendingPeerCount sets the pending peer count for the store.
 func SetPendingPeerCount(pendingPeerCount int) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.pendingPeerCount = pendingPeerCount
+		store.PendingPeerCount = pendingPeerCount
 	}
 }
 
 // SetLeaderSize sets the leader size for the store.
 func SetLeaderSize(leaderSize int64) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.leaderSize = leaderSize
+		store.LeaderSize = leaderSize
 	}
 }
 
 // SetRegionSize sets the Region size for the store.
 func SetRegionSize(regionSize int64) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.regionSize = regionSize
+		store.RegionSize = regionSize
 	}
 }
 
 // SetLeaderWeight sets the leader weight for the store.
 func SetLeaderWeight(leaderWeight float64) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.leaderWeight = leaderWeight
+		store.LeaderWeight = leaderWeight
 	}
 }
 
 // SetRegionWeight sets the Region weight for the store.
 func SetRegionWeight(regionWeight float64) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.regionWeight = regionWeight
+		store.RegionWeight = regionWeight
 	}
 }
 
 // SetLastHeartbeatTS sets the time of last heartbeat for the store.
 func SetLastHeartbeatTS(lastHeartbeatTS time.Time) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.lastHeartbeatTS = lastHeartbeatTS
+		store.LastHeartbeatTS = lastHeartbeatTS
 	}
 }
 
 // SetStoreStats sets the statistics information for the store.
 func SetStoreStats(stats *schedulerpb.StoreStats) StoreCreateOption {
 	return func(store *StoreInfo) {
-		store.stats = stats
+		store.Stats = stats
 	}
 }
 

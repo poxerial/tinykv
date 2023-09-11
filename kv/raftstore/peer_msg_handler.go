@@ -658,23 +658,6 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		// log.Infof("prev region: %v, curr region: %v", result.PrevRegion, result.Region)
 	}
 
-	snapshot := &eraftpb.Snapshot{}
-	for i, msg := range ready.Messages {
-		if msg.MsgType != eraftpb.MessageType_MsgSnapshot || msg.Snapshot != nil {
-			continue
-		}
-		if snapshot.Data != nil && len(snapshot.Data) != 0 {
-			msg.Snapshot = snapshot
-		}
-		for err = raft.ErrSnapshotTemporarilyUnavailable; err != nil; time.Sleep(1 * time.Millisecond) {
-			if err != raft.ErrSnapshotTemporarilyUnavailable {
-				panic(err.Error())
-			}
-			*snapshot, err = d.peerStorage.Snapshot()
-		}
-		ready.Messages[i].Snapshot = snapshot
-	}
-
 	d.Send(d.ctx.trans, ready.Messages)
 
 	d.process(&ready)

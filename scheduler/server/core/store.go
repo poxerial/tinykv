@@ -27,28 +27,28 @@ import (
 
 // StoreInfo contains information about a store.
 type StoreInfo struct {
-	meta  *metapb.Store
-	stats *schedulerpb.StoreStats
-	// Blocked means that the store is blocked from balance.
-	blocked          bool
-	leaderCount      int
-	regionCount      int
-	leaderSize       int64
-	regionSize       int64
-	pendingPeerCount int
-	lastHeartbeatTS  time.Time
-	leaderWeight     float64
-	regionWeight     float64
+	Meta  *metapb.Store
+	Stats *schedulerpb.StoreStats
+	// Blocked means that the store is Blocked from balance.
+	Blocked          bool
+	LeaderCount      int
+	RegionCount      int
+	LeaderSize       int64
+	RegionSize       int64
+	PendingPeerCount int
+	LastHeartbeatTS  time.Time
+	LeaderWeight     float64
+	RegionWeight     float64
 	available        func() bool
 }
 
 // NewStoreInfo creates StoreInfo with meta data.
 func NewStoreInfo(store *metapb.Store, opts ...StoreCreateOption) *StoreInfo {
 	storeInfo := &StoreInfo{
-		meta:         store,
-		stats:        &schedulerpb.StoreStats{},
-		leaderWeight: 1.0,
-		regionWeight: 1.0,
+		Meta:         store,
+		Stats:        &schedulerpb.StoreStats{},
+		LeaderWeight: 1.0,
+		RegionWeight: 1.0,
 	}
 	for _, opt := range opts {
 		opt(storeInfo)
@@ -58,19 +58,19 @@ func NewStoreInfo(store *metapb.Store, opts ...StoreCreateOption) *StoreInfo {
 
 // Clone creates a copy of current StoreInfo.
 func (s *StoreInfo) Clone(opts ...StoreCreateOption) *StoreInfo {
-	meta := proto.Clone(s.meta).(*metapb.Store)
+	meta := proto.Clone(s.Meta).(*metapb.Store)
 	store := &StoreInfo{
-		meta:             meta,
-		stats:            s.stats,
-		blocked:          s.blocked,
-		leaderCount:      s.leaderCount,
-		regionCount:      s.regionCount,
-		leaderSize:       s.leaderSize,
-		regionSize:       s.regionSize,
-		pendingPeerCount: s.pendingPeerCount,
-		lastHeartbeatTS:  s.lastHeartbeatTS,
-		leaderWeight:     s.leaderWeight,
-		regionWeight:     s.regionWeight,
+		Meta:             meta,
+		Stats:            s.Stats,
+		Blocked:          s.Blocked,
+		LeaderCount:      s.LeaderCount,
+		RegionCount:      s.RegionCount,
+		LeaderSize:       s.LeaderSize,
+		RegionSize:       s.RegionSize,
+		PendingPeerCount: s.PendingPeerCount,
+		LastHeartbeatTS:  s.LastHeartbeatTS,
+		LeaderWeight:     s.LeaderWeight,
+		RegionWeight:     s.RegionWeight,
 		available:        s.available,
 	}
 
@@ -82,7 +82,7 @@ func (s *StoreInfo) Clone(opts ...StoreCreateOption) *StoreInfo {
 
 // IsBlocked returns if the store is blocked.
 func (s *StoreInfo) IsBlocked() bool {
-	return s.blocked
+	return s.Blocked
 }
 
 // IsAvailable returns if the store bucket of limitation is available
@@ -115,107 +115,107 @@ func (s *StoreInfo) DownTime() time.Duration {
 
 // GetMeta returns the meta information of the store.
 func (s *StoreInfo) GetMeta() *metapb.Store {
-	return s.meta
+	return s.Meta
 }
 
 // GetState returns the state of the store.
 func (s *StoreInfo) GetState() metapb.StoreState {
-	return s.meta.GetState()
+	return s.Meta.GetState()
 }
 
 // GetAddress returns the address of the store.
 func (s *StoreInfo) GetAddress() string {
-	return s.meta.GetAddress()
+	return s.Meta.GetAddress()
 }
 
 // GetID returns the ID of the store.
 func (s *StoreInfo) GetID() uint64 {
-	return s.meta.GetId()
+	return s.Meta.GetId()
 }
 
 // GetStoreStats returns the statistics information of the store.
 func (s *StoreInfo) GetStoreStats() *schedulerpb.StoreStats {
-	return s.stats
+	return s.Stats
 }
 
 // GetCapacity returns the capacity size of the store.
 func (s *StoreInfo) GetCapacity() uint64 {
-	return s.stats.GetCapacity()
+	return s.Stats.GetCapacity()
 }
 
 // GetAvailable returns the available size of the store.
 func (s *StoreInfo) GetAvailable() uint64 {
-	return s.stats.GetAvailable()
+	return s.Stats.GetAvailable()
 }
 
 // GetUsedSize returns the used size of the store.
 func (s *StoreInfo) GetUsedSize() uint64 {
-	return s.stats.GetUsedSize()
+	return s.Stats.GetUsedSize()
 }
 
 // IsBusy returns if the store is busy.
 func (s *StoreInfo) IsBusy() bool {
-	return s.stats.GetIsBusy()
+	return s.Stats.GetIsBusy()
 }
 
 // GetSendingSnapCount returns the current sending snapshot count of the store.
 func (s *StoreInfo) GetSendingSnapCount() uint32 {
-	return s.stats.GetSendingSnapCount()
+	return s.Stats.GetSendingSnapCount()
 }
 
 // GetReceivingSnapCount returns the current receiving snapshot count of the store.
 func (s *StoreInfo) GetReceivingSnapCount() uint32 {
-	return s.stats.GetReceivingSnapCount()
+	return s.Stats.GetReceivingSnapCount()
 }
 
 // GetApplyingSnapCount returns the current applying snapshot count of the store.
 func (s *StoreInfo) GetApplyingSnapCount() uint32 {
-	return s.stats.GetApplyingSnapCount()
+	return s.Stats.GetApplyingSnapCount()
 }
 
 // GetStartTime returns the start time of the store.
 func (s *StoreInfo) GetStartTime() uint32 {
-	return s.stats.GetStartTime()
+	return s.Stats.GetStartTime()
 }
 
 // GetLeaderCount returns the leader count of the store.
 func (s *StoreInfo) GetLeaderCount() int {
-	return s.leaderCount
+	return s.LeaderCount
 }
 
 // GetRegionCount returns the Region count of the store.
 func (s *StoreInfo) GetRegionCount() int {
-	return s.regionCount
+	return s.RegionCount
 }
 
 // GetLeaderSize returns the leader size of the store.
 func (s *StoreInfo) GetLeaderSize() int64 {
-	return s.leaderSize
+	return s.LeaderSize
 }
 
 // GetRegionSize returns the Region size of the store.
 func (s *StoreInfo) GetRegionSize() int64 {
-	return s.regionSize
+	return s.RegionSize
 }
 
 // GetPendingPeerCount returns the pending peer count of the store.
 func (s *StoreInfo) GetPendingPeerCount() int {
-	return s.pendingPeerCount
+	return s.PendingPeerCount
 }
 
 // GetLeaderWeight returns the leader weight of the store.
 func (s *StoreInfo) GetLeaderWeight() float64 {
-	return s.leaderWeight
+	return s.LeaderWeight
 }
 
 // GetRegionWeight returns the Region weight of the store.
 func (s *StoreInfo) GetRegionWeight() float64 {
-	return s.regionWeight
+	return s.RegionWeight
 }
 
 // GetLastHeartbeatTS returns the last heartbeat timestamp of the store.
 func (s *StoreInfo) GetLastHeartbeatTS() time.Time {
-	return s.lastHeartbeatTS
+	return s.LastHeartbeatTS
 }
 
 const minWeight = 1e-6

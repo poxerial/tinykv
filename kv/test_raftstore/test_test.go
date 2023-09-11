@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Connor1996/badger"
-	"github.com/google/btree"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
 	"github.com/pingcap-incubator/tinykv/kv/storage/raft_storage"
@@ -22,19 +21,6 @@ import (
 	"github.com/pingcap-incubator/tinykv/proto/pkg/raft_cmdpb"
 	"github.com/stretchr/testify/assert"
 )
-
-func (c *Cluster) sprintRegionsRange() string {
-	str := ""
-	c.schedulerClient.RLock()
-	defer c.schedulerClient.RUnlock()
-
-	c.schedulerClient.regionsRange.Ascend(func(i btree.Item) bool {
-		region_item := i.(*regionItem)
-		str = str + fmt.Sprintf("\n%+v", region_item)
-		return true
-	})
-	return str
-}
 
 func checkOnValue(value []byte, cli, k int) bool {
 	var cli_get, k_get int
@@ -74,7 +60,7 @@ func (c *Cluster) scanAndCheck(start, end []byte, cli int, j int) {
 			}
 			if !checkOnValue(value, cli, i) {
 				panic(fmt.Sprintf("want \"x %v %v y\" got %v \nin region %v with region range %v",
-					cli, i, string(value), region, c.sprintRegionsRange()))
+					cli, i, string(value), region, c.SprintRegionsRange()))
 			}
 			i++
 		}
@@ -87,7 +73,7 @@ func (c *Cluster) scanAndCheck(start, end []byte, cli int, j int) {
 	}
 	if i != j {
 		err_msg := fmt.Sprintf("client %v value number not match: want %v, got %v with region range %v",
-			cli, j, i, c.sprintRegionsRange())
+			cli, j, i, c.SprintRegionsRange())
 		log.Info(err_msg)
 		panic(err_msg)
 	}
@@ -349,9 +335,9 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			// log.Infof("read from clients %d\n", cli)
 			j := <-clnts[cli]
 
-			if j < 10 {
-				// log.Infof("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
-			}
+			// if j < 10 {
+			// log.Infof("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
+			// }
 			start := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", 0)
 			end := strconv.Itoa(cli) + " " + fmt.Sprintf("%08d", j)
 			cluster.scanAndCheck([]byte(start), []byte(end), cli, j)
@@ -818,6 +804,14 @@ func TestSplitConfChangeSnapshotUnreliableRecover3B(t *testing.T) {
 func TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3B(t *testing.T) {
 	// Test: unreliable net, restarts, partitions, snapshots, conf change, many clients (3B) ...
 	GenericTest(t, "3B", 5, true, true, true, 100, true, true)
+}
+
+func TestSplitConfChangeSnapshotUnreliableRecoverConcurrentPartition3BX100(t *testing.T) {
+	// Test: unreliable net, restarts, partitions, snapshots, conf change, many clients (3B) ...
+	for i := 0; i < 100; i += 1 {
+		GenericTest(t, "3B", 5, true, true, true, 100, true, true)
+		log.Infof("%v finished", i)
+	}
 }
 
 func TestSplitConfChangeConcurrentSnapshot3B(t *testing.T) {
