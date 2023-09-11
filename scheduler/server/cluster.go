@@ -304,7 +304,7 @@ func (c *RaftCluster) processRegionHeartbeat(region *core.RegionInfo) error {
 		return nil
 	}
 
-	c.core.PutRegion(region)
+	c.core.PutRegionAndUpdate(region)
 
 	return nil
 }

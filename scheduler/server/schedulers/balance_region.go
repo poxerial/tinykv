@@ -14,6 +14,8 @@
 package schedulers
 
 import (
+	"sort"
+
 	"github.com/pingcap-incubator/tinykv/scheduler/server/core"
 	"github.com/pingcap-incubator/tinykv/scheduler/server/schedule"
 	"github.com/pingcap-incubator/tinykv/scheduler/server/schedule/operator"
@@ -75,8 +77,72 @@ func (s *balanceRegionScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
 	return s.opController.OperatorCount(operator.OpRegion) < cluster.GetRegionScheduleLimit()
 }
 
+type byRegionSize []*core.StoreInfo
+
+func (b byRegionSize) Len() int {
+	return len(b)
+}
+
+func (b byRegionSize) Swap(i, j int) {
+	b[i], b[j] = b[j], b[i]
+}
+
+func (b byRegionSize) Less(i, j int) bool {
+	return b[i].RegionSize > b[j].RegionSize
+}
+
 func (s *balanceRegionScheduler) Schedule(cluster opt.Cluster) *operator.Operator {
 	// Your Code Here (3C).
 
-	return nil
+	suitable_stores := make([]*core.StoreInfo, 0)
+	for _, store := range cluster.GetStores() {
+		if store.IsUp() && store.DownTime() < cluster.GetMaxStoreDownTime() {
+			suitable_stores = append(suitable_stores, store)
+		}
+	}
+
+	sort.Sort(byRegionSize(suitable_stores))
+
+	var region *core.RegionInfo = nil
+	var from_store *core.StoreInfo
+
+	for _, from_store = range suitable_stores {
+		cluster.GetPendingRegionsWithLock(from_store.Meta.Id, func(c core.RegionsContainer) {
+			region = c.RandomRegion([]byte(""), []byte(""))
+		})
+
+		if region == nil {
+			cluster.GetFollowersWithLock(from_store.Meta.Id, func(c core.RegionsContainer) {
+				region = c.RandomRegion([]byte(""), []byte(""))
+			})
+		}
+
+		if region == nil {
+			cluster.GetLeadersWithLock(from_store.Meta.Id, func(c core.RegionsContainer) {
+				region = c.RandomRegion([]byte(""), []byte(""))
+			})
+		}
+
+		if region != nil {
+			break
+		}
+	}
+
+	if region == nil {
+		panic("Can't find region to move from!")
+	}
+
+	to_store := suitable_stores[len(suitable_stores)-1]
+
+	is_valuable := from_store.RegionSize-to_store.RegionSize > 2*region.GetApproximateSize()
+	if !is_valuable {
+		return nil
+	}
+
+	op, err := operator.CreateMovePeerOperator("balance region", cluster, region, operator.OpBalance, from_store.GetID(), to_store.GetID(), region.GetStorePeer(from_store.GetID()).Id)
+	if err != nil {
+		panic(err)
+	}
+
+	return op
 }

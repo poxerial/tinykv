@@ -274,29 +274,57 @@ func (bc *BasicCluster) TakeStore(storeID uint64) *StoreInfo {
 func (bc *BasicCluster) PutRegion(region *RegionInfo) []*RegionInfo {
 	bc.Lock()
 	defer bc.Unlock()
-	old := bc.Regions.GetRegion(region.GetID())
-	if old == nil {
-		store_infos := make(map[uint64]*StoreInfo, len(region.GetPeers()))
-		for _, peer := range region.GetPeers() {
+	return bc.Regions.SetRegion(region)
+}
+
+func (bc *BasicCluster) PutRegionAndUpdate(region *RegionInfo) {
+	bc.Lock()
+	defer bc.Unlock()
+
+	bc.Regions.SetRegion(region)
+
+	store_infos := make(map[uint64]*StoreInfo)
+
+	if old := bc.Regions.GetRegion(region.GetID()); old != nil {
+		for _, peer := range old.GetPeers() {
 			store_info := bc.Stores.GetStore(peer.StoreId)
-			store_info.RegionCount += 1
-			store_info.RegionSize += region.approximateSize
-			if peer.Id == region.leader.Id {
-				store_info.LeaderCount += 1
-				store_info.LeaderSize += region.GetApproximateSize()
+			store_info.RegionCount -= 1
+			store_info.RegionSize -= old.GetApproximateSize()
+			if peer.Id == old.leader.Id {
+				store_info.LeaderCount -= 1
+				store_info.LeaderSize -= old.GetApproximateSize()
 			}
 			store_infos[peer.Id] = store_info
 		}
-		for _, pending_peer := range region.GetPendingPeers() {
-			store_infos[pending_peer.Id].PendingPeerCount++
-		}
-		for _, store_info := range store_infos {
-			bc.Stores.SetStore(store_info)
-		}
-		return bc.Regions.SetRegion(region)
-	}
-	new_peers := region.GetDiffFollowers(old)
 
+		for _, peer := range old.GetPendingPeers() {
+			store_infos[peer.Id].PendingPeerCount -= 1
+		}
+	}
+
+	for _, peer := range region.GetPeers() {
+		var store_info *StoreInfo
+		var ok bool
+		if store_info, ok = store_infos[peer.Id]; ok {
+		} else {
+			store_info = bc.Stores.GetStore(peer.StoreId)
+		}
+		store_info.RegionCount += 1
+		store_info.RegionSize += region.approximateSize
+		if peer.Id == region.leader.Id {
+			store_info.LeaderCount += 1
+			store_info.LeaderSize += region.GetApproximateSize()
+		}
+		store_infos[peer.Id] = store_info
+	}
+
+	for _, peer := range region.GetPendingPeers() {
+		store_infos[peer.Id].PendingPeerCount += 1
+	}
+
+	for _, store_info := range store_infos {
+		bc.Stores.SetStore(store_info)
+	}
 }
 
 // RemoveRegion removes RegionInfo from regionTree and regionMap.
