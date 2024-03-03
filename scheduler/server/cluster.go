@@ -276,9 +276,82 @@ func (c *RaftCluster) handleStoreHeartbeat(stats *schedulerpb.StoreStats) error 
 	return nil
 }
 
+func isStale(this *metapb.RegionEpoch, other *metapb.RegionEpoch) bool {
+	if this.ConfVer < other.ConfVer {
+		return true
+	}
+	if this.Version < other.Version {
+		return true
+	}
+	return false
+}
+
 // processRegionHeartbeat updates the region information.
 func (c *RaftCluster) processRegionHeartbeat(region *core.RegionInfo) error {
 	// Your Code Here (3C).
+	if region == nil {
+		return nil
+	}
+	c.Lock()
+	defer c.Unlock()
+	if old := c.core.Regions.GetRegion(region.GetID()); old != nil {
+		if isStale(region.GetRegionEpoch(), old.GetRegionEpoch()) {
+			return nil
+		}
+		for storeId, _ := range old.GetStoreIds() {
+			store := c.core.Stores.GetStore(storeId)
+
+			leaderCount := store.GetLeaderCount()
+			if old.GetLeader().StoreId == storeId {
+				leaderCount -= 1
+			}
+
+			regionCount := store.GetRegionCount() - 1
+
+			pendingPeerCount := store.GetPendingPeerCount()
+			for _, peer := range old.GetPendingPeers() {
+				if peer.StoreId == storeId {
+					pendingPeerCount -= 1
+				}
+			}
+
+			leaderSize := store.GetLeaderSize() - old.GetApproximateSize()
+			regionSize := store.GetRegionSize() - old.GetApproximateSize()
+
+			c.core.Stores.UpdateStoreStatus(storeId, leaderCount, regionCount, pendingPeerCount, leaderSize, regionSize)
+		}
+		c.core.RemoveRegion(old)
+	} else {
+		for _, overlaped := range c.core.Regions.GetOverlaps(region) {
+			if isStale(region.GetRegionEpoch(), overlaped.GetRegionEpoch()) {
+				return nil
+			}
+		}
+	}
+	c.core.PutRegion(region)
+
+	for storeId, _ := range region.GetStoreIds() {
+		store := c.core.Stores.GetStore(storeId)
+
+		leaderCount := store.GetLeaderCount()
+		if region.GetLeader().StoreId == storeId {
+			leaderCount += 1
+		}
+
+		regionCount := store.GetRegionCount() + 1
+
+		pendingPeerCount := store.GetPendingPeerCount()
+		for _, peer := range region.GetPendingPeers() {
+			if peer.StoreId == storeId {
+				pendingPeerCount += 1
+			}
+		}
+
+		leaderSize := store.GetLeaderSize() + region.GetApproximateSize()
+		regionSize := store.GetRegionSize() + region.GetApproximateSize()
+
+		c.core.Stores.UpdateStoreStatus(storeId, leaderCount, regionCount, pendingPeerCount, leaderSize, regionSize)
+	}
 
 	return nil
 }
